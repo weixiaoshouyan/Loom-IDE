@@ -53,11 +53,11 @@ export class OrcaAgent {
     }
   }
 
-  async chat(message: string, workspacePath?: string): Promise<string> {
+  async chat(messages: ChatMessage[], workspacePath?: string): Promise<string> {
     try {
       const body: any = {
         model: '',
-        messages: [{ role: 'user', content: message }],
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
         stream: false,
         useAgent: true,
         workspacePath: workspacePath || '',
@@ -75,10 +75,10 @@ export class OrcaAgent {
     }
   }
 
-  async *chatStream(message: string, workspacePath?: string): AsyncGenerator<string> {
+  async *chatStream(messages: ChatMessage[], workspacePath?: string): AsyncGenerator<string> {
     const body: any = {
       model: '',
-      messages: [{ role: 'user', content: message }],
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
       stream: true,
       useAgent: true,
       workspacePath: workspacePath || '',

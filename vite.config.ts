@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+﻿import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -10,7 +10,7 @@ export default defineConfig({
     outDir: path.resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,
   },
-  server: {
-    port: 5174,
-  },
+  server: { port: 5174 },
+  worker: { format: 'es' },
+  optimizeDeps: { include: ['monaco-editor'] },
 });
