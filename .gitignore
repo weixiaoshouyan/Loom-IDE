@@ -5,5 +5,7 @@ release/
 .DS_Store
 Thumbs.db
 compile-main.js
+compile-ts.js
+_fix_modules.js
 _empty/
 _empty_temp/

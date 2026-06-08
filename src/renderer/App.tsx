@@ -210,7 +210,6 @@ export default function App() {
       else if (e.ctrlKey && e.shiftKey && e.key === 'G') { e.preventDefault(); setSidebarView('git'); }
       else if (e.altKey && e.key === 'z') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'editor.wordWrap', value: '' } })); }
       else if (e.key === 'F12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'goToDefinition' } })); }
-      else if (e.key === 'F5') { e.preventDefault(); addOutput('Debug: Starting debug session...'); }
       else if (e.altKey && e.key === 'F12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'peekDefinition' } })); }
       else if (e.shiftKey && e.key === 'F12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'findReferences' } })); }
       else if (e.key === 'F2') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'rename' } })); }
