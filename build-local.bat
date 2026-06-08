@@ -63,4 +63,18 @@ echo ========================================
 echo   构建完成！
 echo   安装包位于: release\ 目录
 echo ========================================
+echo.
+echo [可选] 推送到 GitHub...
+echo   仓库: https://github.com/weixiaoshouyan/Loom-IDE.git
+echo.
+set /p PUSH="是否推送到 GitHub? (Y/N): "
+if /i "%PUSH%"=="Y" (
+    echo 正在推送...
+    git push -u origin main
+    if %ERRORLEVEL% EQU 0 (
+        echo [OK] 推送成功!
+    ) else (
+        echo [ERROR] 推送失败，请检查网络和认证
+    )
+)
 pause
