@@ -72,7 +72,7 @@ function ExplorerView({ workspacePath, onOpenFile, onOpenFolder, selectedFile }:
 }
 
 // ====== Search View ======
-function SearchView({ workspacePath }: { workspacePath: string }) {
+function SearchView({ workspacePath, onOpenFile }: { workspacePath: string; onOpenFile: (path: string, content: string) => void }) {
   const [query, setQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -163,7 +163,8 @@ function SearchView({ workspacePath }: { workspacePath: string }) {
                   <span className="search-result-file-count">{r.lines.length}</span>
                 </div>
                 {r.lines.map((l, j) => (
-                  <div key={j} className="search-result-line">
+                  <div key={j} className="search-result-line" style={{ cursor: 'pointer' }}
+                    onClick={() => onOpenFile(r.file, '')}>
                     <span className="search-result-line-num">{l.num}</span>
                     {l.text.substring(0, 80)}
                   </div>
@@ -374,7 +375,7 @@ export default function Sidebar({ view, workspacePath, onOpenFile, onOpenFolder,
   return (
     <div className="sidebar" style={{ width: sidebarWidth }}>
       {view === 'explorer' && <ExplorerView workspacePath={workspacePath} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} selectedFile={selectedFile} />}
-      {view === 'search' && <SearchView workspacePath={workspacePath} />}
+      {view === 'search' && <SearchView workspacePath={workspacePath} onOpenFile={onOpenFile} />}
       {view === 'git' && <GitView workspacePath={workspacePath} />}
       {view === 'extensions' && <ExtensionsView />}
       {view === 'outline' && (

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
 import TitleBar from './components/TitleBar';
 import ActivityBar from './components/ActivityBar';
 import Sidebar from './components/Sidebar';
@@ -50,6 +50,8 @@ export default function App() {
   const [problems, setProblems] = useState<{ severity: string; message: string; file?: string; line?: number }[]>([]);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [agentStatus, setAgentStatus] = useState<'online' | 'offline'>('offline');
+  const [isDebugging, setIsDebugging] = useState(false);
+  const debugCleanupRef = useRef<(() => void) | null>(null);
 
   // Check agent status
   useEffect(() => {
@@ -135,15 +137,37 @@ export default function App() {
     const f = openFiles[activeIdx];
     if (!f) { addOutput('Debug: No file to debug. Open a JavaScript/TypeScript file first.'); return; }
     if (!workspace) { addOutput('Debug: Open a folder first.'); return; }
+    if (isDebugging) { addOutput('Debug: Already debugging. Stop current session first.'); return; }
+    
     addOutput(`Debug: Starting debug session for ${f.path}...`);
     try {
+      // Clean up previous listeners if any
+      if (debugCleanupRef.current) {
+        debugCleanupRef.current();
+        debugCleanupRef.current = null;
+      }
+      
       const result = await (window as any).loom.debug?.start?.(f.path, workspace);
       if (result?.ok) {
         addOutput('Debug: ' + (result.message || 'Session started on port 9229'));
-        // Set up debug output listeners
-        (window as any).loom.debug?.onStdout?.((data: string) => addOutput('Debug stdout: ' + data.trim()));
-        (window as any).loom.debug?.onStderr?.((data: string) => addOutput('Debug stderr: ' + data.trim()));
-        (window as any).loom.debug?.onExit?.((code: number | null) => addOutput(`Debug: Process exited with code ${code}`));
+        setIsDebugging(true);
+        
+        // Set up debug output listeners and store cleanup functions
+        const cleanupFns: (() => void)[] = [];
+        const removeStdout = (window as any).loom.debug?.onStdout?.((data: string) => addOutput('Debug stdout: ' + data.trim()));
+        const removeStderr = (window as any).loom.debug?.onStderr?.((data: string) => addOutput('Debug stderr: ' + data.trim()));
+        const removeExit = (window as any).loom.debug?.onExit?.((code: number | null) => {
+          addOutput(`Debug: Process exited with code ${code}`);
+          setIsDebugging(false);
+        });
+        
+        if (removeStdout) cleanupFns.push(removeStdout);
+        if (removeStderr) cleanupFns.push(removeStderr);
+        if (removeExit) cleanupFns.push(removeExit);
+        
+        debugCleanupRef.current = () => {
+          cleanupFns.forEach(fn => fn());
+        };
       } else {
         addOutput('Debug: Failed to start - ' + (result?.message || 'Unknown error'));
       }
@@ -153,14 +177,29 @@ export default function App() {
   };
 
   const stopDebug = async () => {
+    if (!isDebugging) { addOutput('Debug: No active debug session.'); return; }
     addOutput('Debug: Stopping session...');
     try {
       await (window as any).loom.debug?.stop?.();
       addOutput('Debug: Session stopped.');
+      setIsDebugging(false);
+      if (debugCleanupRef.current) {
+        debugCleanupRef.current();
+        debugCleanupRef.current = null;
+      }
     } catch (e: any) {
       addOutput('Debug stop error: ' + e.message);
     }
   };
+
+  // Cleanup debug listeners on unmount
+  useEffect(() => {
+    return () => {
+      if (debugCleanupRef.current) {
+        debugCleanupRef.current();
+      }
+    };
+  }, []);
 
   const closeTab = useCallback((idx: number) => {
     const f = openFiles[idx];
@@ -215,17 +254,20 @@ export default function App() {
       else if (e.key === 'F2') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'rename' } })); }
       else if (e.shiftKey && e.altKey && e.key === 'F') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })); }
       else if (e.ctrlKey && e.key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })); }
-      else if (e.ctrlKey && e.shiftKey && e.key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleBlockComment' } })); }
+      else if (e.ctrlKey && e.shiftKey && e.code === 'Slash') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleBlockComment' } })); }
+      else if (e.ctrlKey && e.key === 'n') { e.preventDefault(); addOrFocusFile('untitled-' + Date.now(), ''); }
+      else if (e.ctrlKey && e.key === 'p') { e.preventDefault(); openFileFromDisk(); }
       // Debugger shortcuts
-      else if (e.key === 'F5') { e.preventDefault(); startDebug(); }
+      else if (e.key === 'F5' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); if (isDebugging) addOutput('Debug: Continue (F5)'); else startDebug(); }
       else if (e.shiftKey && e.key === 'F5') { e.preventDefault(); stopDebug(); }
-      else if (e.key === 'F10') { e.preventDefault(); addOutput('Debug: Step Over (F10)'); }
-      else if (e.key === 'F11') { e.preventDefault(); addOutput('Debug: Step Into (F11)'); }
-      else if (e.shiftKey && e.key === 'F11') { e.preventDefault(); addOutput('Debug: Step Out (Shift+F11)'); }
+      else if (e.key === 'F10') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Over (F10) - Continue execution'); else addOutput('Debug: No active session. Press F5 to start.'); }
+      else if (e.key === 'F11') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Into (F11) - Enter function'); else addOutput('Debug: No active session. Press F5 to start.'); }
+      else if (e.shiftKey && e.key === 'F11') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Out (Shift+F11) - Exit function'); else addOutput('Debug: No active session. Press F5 to start.'); }
+      else if (e.ctrlKey && e.shiftKey && e.key === 'F5') { e.preventDefault(); addOutput('Debug: Restart (Ctrl+Shift+F5)'); stopDebug().then(() => startDebug()); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openFiles, activeIdx]);
+  }, [openFiles, activeIdx, isDebugging]);
 
   // Welcome page command listener
   useEffect(() => {
@@ -287,16 +329,16 @@ export default function App() {
     {
       label: 'Run',
       items: [
-        { label: 'Start Debugging', shortcut: 'F5', action: () => addOutput('Debug: Starting debug session...') },
+        { label: 'Start Debugging', shortcut: 'F5', action: startDebug },
         { label: 'Run Without Debugging', shortcut: 'Ctrl+F5', action: () => addOutput('Run: Starting...') },
         { separator: true, label: '' },
-        { label: 'Stop Debugging', shortcut: 'Shift+F5', action: () => addOutput('Debug: Stopped.') },
+        { label: 'Stop Debugging', shortcut: 'Shift+F5', action: stopDebug },
       ],
     },
     {
       label: 'Help',
       items: [
-        { label: 'About Loom IDE', action: () => addOutput('Loom IDE v0.1.0 - AI-powered development environment') },
+        { label: 'About Loom IDE', action: () => addOutput('Loom IDE v0.2.0 - AI-powered development environment') },
         { label: 'Keyboard Shortcuts', shortcut: 'Ctrl+K Ctrl+S', action: () => setSettingsOpen(true) },
         { label: 'Check for Updates...', action: () => addOutput('You are running the latest version.') },
       ],

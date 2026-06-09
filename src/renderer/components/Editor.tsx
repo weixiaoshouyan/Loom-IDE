@@ -210,6 +210,20 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
     return () => window.removeEventListener('loom:setting-change' as any, handler);
   }, []);
 
+  // Listen for go-to-line events (from Outline view)
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const { line } = e.detail;
+      const ed = editorRef.current;
+      if (!ed || !line) return;
+      ed.revealLineInCenter(line);
+      ed.setPosition({ lineNumber: line, column: 1 });
+      ed.focus();
+    };
+    window.addEventListener('loom:go-to-line' as any, handler);
+    return () => window.removeEventListener('loom:go-to-line' as any, handler);
+  }, []);
+
   // Listen for editor actions (undo/redo/format/go to def from menu)
   useEffect(() => {
     const handler = (e: CustomEvent) => {

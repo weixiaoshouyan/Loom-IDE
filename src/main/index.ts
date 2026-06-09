@@ -309,7 +309,14 @@ ipcMain.on('terminal:write', (_e: any, termId: string, data: string) => {
   if (t) t.process.stdin?.write(data);
 });
 
-ipcMain.on('terminal:resize', (_e: any, _termId: string, _cols: number, _rows: number) => {});
+ipcMain.on('terminal:resize', (_e: any, termId: string, cols: number, rows: number) => {
+  const t = terminals.get(termId);
+  if (t && t.process.stdin) {
+    // For node-pty, we would resize the PTY, but since we're using child_process,
+    // we'll just note that resize is not fully supported
+    // In a real implementation, you'd use node-pty's resize method
+  }
+});
 
 ipcMain.on('terminal:kill', (_e: any, termId: string) => {
   const t = terminals.get(termId);
