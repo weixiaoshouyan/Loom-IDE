@@ -1,9 +1,11 @@
 ﻿import React, { useRef, useEffect, useCallback, useState } from 'react';
 import * as monaco from 'monaco-editor';
 import type { OpenFile } from '../App';
+import WelcomePage from './WelcomePage';
+import InlineAIEdit from './InlineAIEdit';
 
 // Monaco worker setup
-(self as any).MonacoEnvironment = {
+(window as any).MonacoEnvironment = {
   getWorker(_: any, label: string) {
     const getModule = (url: string) => new Worker(new URL(url, import.meta.url), { type: 'module' });
     switch (label) {
@@ -47,6 +49,7 @@ interface Props {
   file: OpenFile | null;
   openFilePaths: string[];
   onContentChange: (path: string, content: string) => void;
+  workspacePath?: string;
 }
 
 // Find/Replace bar
@@ -62,16 +65,12 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
   const findInputRef = useRef<HTMLInputElement>(null);
   const decorationsRef = useRef<string[]>([]);
 
-  useEffect(() => {
-    setTimeout(() => findInputRef.current?.focus(), 50);
-  }, []);
+  useEffect(() => { setTimeout(() => findInputRef.current?.focus(), 50); }, []);
 
   useEffect(() => {
     if (!editor || !findText) {
       decorationsRef.current = editor?.deltaDecorations(decorationsRef.current, []) || [];
-      setMatchCount(0);
-      setCurrentMatch(0);
-      return;
+      setMatchCount(0); setCurrentMatch(0); return;
     }
     const model = editor.getModel();
     if (!model) return;
@@ -83,9 +82,7 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
       options: { inlineClassName: 'search-highlight-match', stickiness: 1 },
     }));
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
-    if (matches.length > 0) {
-      editor.revealRangeInCenter(matches[0].range);
-    }
+    if (matches.length > 0) editor.revealRangeInCenter(matches[0].range);
   }, [findText, matchCase, wholeWord, useRegex, editor]);
 
   const findNext = useCallback(() => {
@@ -107,7 +104,6 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
     const pos = selection.getStartPosition();
     const text = model.getValueInRange(selection);
     if (text.length === 0) {
-      // No selection, find next match from cursor
       const fromPos = pos;
       const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord ? 'true' : null, false);
       const nextMatch = matches.find(m => m.range.getStartPosition().isAfterOrEqual(fromPos));
@@ -133,9 +129,7 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
 
   const close = useCallback(() => {
     decorationsRef.current = editor?.deltaDecorations(decorationsRef.current, []) || [];
-    setFindText('');
-    setReplaceText('');
-    setShowReplace(false);
+    setFindText(''); setReplaceText(''); setShowReplace(false);
     editor?.focus();
   }, [editor]);
 
@@ -176,35 +170,58 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
   );
 }
 
-export default function Editor({ file, openFilePaths, onContentChange }: Props) {
+export default function Editor({ file, openFilePaths, onContentChange, workspacePath: wsPath }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const prevPathRef = useRef<string | null>(null);
   const viewStatesRef = useRef<Record<string, monaco.editor.ICodeEditorViewState | null>>({});
   const cbRef = useRef(onContentChange);
   const [showFind, setShowFind] = useState(false);
-  const [wordWrap, setWordWrap] = useState<'off' | 'on'>('off');
-  const [minimap, setMinimap] = useState(true);
-  const [fontSize, setFontSize] = useState(14);
-  const [lineNumbers, setLineNumbers] = useState(true);
+  const [recentFolders, setRecentFolders] = useState<string[]>([]);
+  const [editorReady, setEditorReady] = useState(false);
+  const [showInlineAI, setShowInlineAI] = useState(false);
+  const [workspacePath, setWorkspacePath] = useState('');
   useEffect(() => { cbRef.current = onContentChange; }, [onContentChange]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'f') { e.preventDefault(); setShowFind(p => !p); }
+      if (e.ctrlKey && e.key === 'k' && !e.shiftKey && !e.altKey) { 
+        e.preventDefault(); 
+        if (editorRef.current?.hasTextFocus()) {
+          setShowInlineAI(p => !p);
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Load recent folders for welcome page
+  useEffect(() => {
+    (window as any).loom?.recent?.getFolders?.().then((folders: string[]) => {
+      setRecentFolders(folders || []);
+    }).catch(() => {});
+  }, []);
+
+  // Sync workspace path
+  useEffect(() => {
+    setWorkspacePath(wsPath || '');
+  }, [wsPath]);
+
   // Listen for settings changes
   useEffect(() => {
     const handler = (e: CustomEvent) => {
       const { key, value } = e.detail;
-      if (key === 'editor.wordWrap') { setWordWrap(value === 'on' ? 'on' : 'off'); }
-      if (key === 'editor.minimap') { setMinimap(value); }
-      if (key === 'editor.fontSize') { setFontSize(value); }
-      if (key === 'editor.lineNumbers') { setLineNumbers(value); }
+      if (!editorRef.current) return;
+      if (key === 'editor.wordWrap') editorRef.current.updateOptions({ wordWrap: value === 'on' ? 'on' : 'off' });
+      if (key === 'editor.minimap') editorRef.current.updateOptions({ minimap: { enabled: value } });
+      if (key === 'editor.fontSize') editorRef.current.updateOptions({ fontSize: value });
+      if (key === 'editor.lineNumbers') editorRef.current.updateOptions({ lineNumbers: value ? 'on' : 'off' });
+      if (key === 'theme') {
+        const isDark = value === 'dark';
+        monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs');
+      }
     };
     window.addEventListener('loom:setting-change' as any, handler);
     return () => window.removeEventListener('loom:setting-change' as any, handler);
@@ -239,25 +256,22 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
       if (action === 'peekDefinition') ed.getAction('editor.action.peekDefinition')?.run();
       if (action === 'toggleComment') ed.getAction('editor.action.commentLine')?.run();
       if (action === 'toggleBlockComment') ed.getAction('editor.action.blockComment')?.run();
+      if (action === 'find') { setShowFind(true); }
+      if (action === 'replace') { setShowFind(true); }
     };
     window.addEventListener('loom:editor-action' as any, handler);
     return () => window.removeEventListener('loom:editor-action' as any, handler);
   }, []);
 
-  // Apply setting changes to editor
+  // Create Monaco editor - always keep it alive
   useEffect(() => {
-    if (!editorRef.current) return;
-    editorRef.current.updateOptions({ wordWrap, minimap: { enabled: minimap }, fontSize, lineNumbers: lineNumbers ? 'on' : 'off' });
-  }, [wordWrap, minimap, fontSize, lineNumbers]);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    editorRef.current = monaco.editor.create(containerRef.current, {
-      value: '', language: 'plaintext', theme: 'vs-dark',
+    if (!containerRef.current || editorRef.current) return;
+    const editor = monaco.editor.create(containerRef.current, {
+      value: '', language: 'plaintext', theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'vs' : 'vs-dark',
       fontSize: 14, fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
       minimap: { enabled: true, scale: 1, showSlider: 'mouseover' },
       scrollBeyondLastLine: false, automaticLayout: true,
-      lineNumbers: lineNumbers ? 'on' : 'off', renderWhitespace: 'selection', tabSize: 2,
+      lineNumbers: 'on', renderWhitespace: 'selection', tabSize: 2,
       wordWrap: 'off', smoothScrolling: true, cursorSmoothCaretAnimation: 'on',
       bracketPairColorization: { enabled: true, independentColorPoolPerBracketType: true },
       matchBrackets: 'always',
@@ -279,7 +293,6 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
       guides: { indentation: true, bracketPairs: true, bracketPairsHorizontal: true, highlightActiveIndentation: true },
       renderLineHighlightOnlyWhenFocus: false,
       cursorBlinking: 'blink',
-      cursorSmoothCaretAnimation: 'explicit',
       fontLigatures: true,
       glyphMargin: true,
       overviewRulerBorder: false,
@@ -290,12 +303,33 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
       lightbulb: { enabled: 'on' },
       codeLens: true,
     });
-    editorRef.current.onDidChangeCursorPosition((e) => {
+    editor.onDidChangeCursorPosition((e) => {
       window.dispatchEvent(new CustomEvent('loom:cursor-change', { detail: { line: e.position.lineNumber, column: e.position.column } }));
     });
-    return () => { editorRef.current?.dispose(); };
+    editorRef.current = editor;
+    setEditorReady(true);
+    return () => { editor.dispose(); editorRef.current = null; };
   }, []);
 
+  // Forward Monaco diagnostics to Problems panel
+  useEffect(() => {
+    if (!editorReady || !editorRef.current) return;
+    const disposable = monaco.editor.onDidChangeMarkers((uris) => {
+      const problems: { severity: string; message: string; file?: string; line?: number }[] = [];
+      for (const uri of uris) {
+        const markers = monaco.editor.getModelMarkers({ resource: uri });
+        for (const m of markers) {
+          const severity = m.severity === monaco.MarkerSeverity.Error ? 'error'
+            : m.severity === monaco.MarkerSeverity.Warning ? 'warning' : 'info';
+          problems.push({ severity, message: m.message, file: uri.fsPath, line: m.startLineNumber });
+        }
+      }
+      window.dispatchEvent(new CustomEvent('loom:diagnostics', { detail: problems }));
+    });
+    return () => disposable.dispose();
+  }, [editorReady]);
+
+  // Switch model when file changes
   useEffect(() => {
     if (!editorRef.current) return;
     if (prevPathRef.current) viewStatesRef.current[prevPathRef.current] = editorRef.current.saveViewState();
@@ -305,7 +339,9 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
     if (!model) {
       model = monaco.editor.createModel(file.content, file.language, uri);
       model.onDidChangeContent(() => { if (model) cbRef.current(file.path, model.getValue()); });
-    } else if (model.getValue() !== file.content) model.setValue(file.content);
+    } else if (model.getValue() !== file.content) {
+      model.setValue(file.content);
+    }
     editorRef.current.setModel(model);
     const saved = viewStatesRef.current[file.path];
     if (saved) editorRef.current.restoreViewState(saved);
@@ -313,6 +349,7 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
     prevPathRef.current = file.path;
   }, [file]);
 
+  // Clean up models for closed files
   useEffect(() => {
     const open = new Set(openFilePaths);
     monaco.editor.getModels().forEach(m => {
@@ -323,64 +360,23 @@ export default function Editor({ file, openFilePaths, onContentChange }: Props) 
     });
   }, [openFilePaths]);
 
-  if (!file) {
-    return (
-      <div className="editor-empty">
-        <div className="editor-welcome">
-          <div className="welcome-logo">
-            <svg viewBox="0 0 256 256" width="96" height="96">
-              <defs>
-                <linearGradient id="wlg" x1="0" y1="1" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#007acc"/><stop offset="100%" stopColor="#4ec9b0"/>
-                </linearGradient>
-              </defs>
-              <rect width="256" height="256" rx="48" fill="#1a1a2e"/>
-              <circle cx="128" cy="128" r="96" fill="none" stroke="url(#wlg)" strokeWidth="2" opacity="0.3"/>
-              <path d="M72 52 L72 200 L168 200" fill="none" stroke="url(#wlg)" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round"/>
-              <circle cx="128" cy="128" r="6" fill="#4ec9b0" opacity="0.9"/>
-            </svg>
-          </div>
-          <h1>Loom IDE</h1>
-          <p className="welcome-subtitle">织网 · AI-Native Development Environment</p>
-          <div className="welcome-actions">
-            <button className="welcome-action-btn" onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFile' }))}>
-              <svg viewBox="0 0 16 16" width="16" height="16"><path d="M4 1.5H3a2 2 0 00-2 2v9a2 2 0 002 2h10a2 2 0 002-2V4.5" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M9 1.5v4a.5.5 0 00.5.5h4" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
-              Open File
-            </button>
-            <button className="welcome-action-btn" onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFolder' }))}>
-              <svg viewBox="0 0 16 16" width="16" height="16"><path d="M1.5 3A1.5 1.5 0 013 1.5h3.146a.5.5 0 01.354.146L7.707 2.854a.5.5 0 00.354.146H13A1.5 1.5 0 0114.5 4.5v8A1.5 1.5 0 0113 14H3A1.5 1.5 0 011.5 12.5V3z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
-              Open Folder
-            </button>
-            <button className="welcome-action-btn" onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'newFile' }))}>
-              <svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 2h12v12H2z" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M8 5v6M5 8h6" stroke="currentColor" strokeWidth="1"/></svg>
-              New File
-            </button>
-          </div>
-          <div className="welcome-recent">
-            <h3>Recent</h3>
-            <div className="welcome-recent-empty">No recent folders</div>
-          </div>
-          <div className="welcome-shortcuts">
-            <h3>Keyboard Shortcuts</h3>
-            <div className="welcome-shortcut"><kbd>Ctrl+Shift+P</kbd> Command Palette</div>
-            <div className="welcome-shortcut"><kbd>Ctrl+P</kbd> Quick Open File</div>
-            <div className="welcome-shortcut"><kbd>F12</kbd> Go to Definition</div>
-            <div className="welcome-shortcut"><kbd>Shift+F12</kbd> Find References</div>
-            <div className="welcome-shortcut"><kbd>F2</kbd> Rename Symbol</div>
-            <div className="welcome-shortcut"><kbd>Shift+Alt+F</kbd> Format Document</div>
-            <div className="welcome-shortcut"><kbd>Ctrl+F</kbd> Find in File</div>
-            <div className="welcome-shortcut"><kbd>Ctrl+H</kbd> Find &amp; Replace</div>
-            <div className="welcome-shortcut"><kbd>Ctrl+`</kbd> Toggle Terminal</div>
-            <div className="welcome-shortcut"><kbd>Ctrl+B</kbd> Toggle Sidebar</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
   return (
     <>
       {showFind && <FindReplaceBar editor={editorRef.current} />}
-      <div ref={containerRef} className="editor-container" />
+      {showInlineAI && <InlineAIEdit editorRef={editorRef} workspacePath={workspacePath} onClose={() => setShowInlineAI(false)} />}
+      <div className="editor-container" style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+        {!file && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-editor)', zIndex: 1, overflow: 'auto' }}>
+            <WelcomePage 
+              onOpenFile={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFile' }))}
+              onOpenFolder={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFolder' }))}
+              onNewFile={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'newFile' }))}
+              onOpenSettings={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openSettings' }))}
+            />
+          </div>
+        )}
+      </div>
     </>
   );
 }

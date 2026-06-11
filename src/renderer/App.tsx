@@ -8,6 +8,11 @@ import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import AIAgent from './components/AIAgent';
 import Settings from './components/Settings';
+import NotificationContainer, { NotificationItem, NotificationType } from './components/Notification';
+import EditorGroup from './components/EditorGroup';
+import TabBar from './components/TabBar';
+import Breadcrumb from './components/Breadcrumb';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export interface OpenFile {
   path: string;
@@ -44,25 +49,124 @@ export default function App() {
   const [panelVisible, setPanelVisible] = useState(false);
   const [panelHeight, setPanelHeight] = useState(220);
   const [cmdPalette, setCmdPalette] = useState(false);
+  const [untitledCount, setUntitledCount] = useState(1);
   const [aiOpen, setAiOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [problems, setProblems] = useState<{ severity: string; message: string; file?: string; line?: number }[]>([]);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [agentStatus, setAgentStatus] = useState<'online' | 'offline'>('offline');
+  const [aiMode, setAiMode] = useState<'orca' | 'builtin'>('orca');
+  const [orcaOnline, setOrcaOnline] = useState(false);
   const [isDebugging, setIsDebugging] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const notifIdRef = useRef(0);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [splitIdx, setSplitIdx] = useState(0);
+  const [focusSide, setFocusSide] = useState<'left' | 'right'>('left');
+  const [gitStatusMap, setGitStatusMap] = useState<Record<string, string>>({});
   const debugCleanupRef = useRef<(() => void) | null>(null);
+  const minimapRef = useRef(true); // track minimap toggle state
 
-  // Check agent status
+  // Apply theme
+  useEffect(() => {
+    (window as any).loom?.settings?.getAll?.().then((s: any) => {
+      if (s?.theme) document.documentElement.setAttribute('data-theme', s.theme);
+    }).catch(() => {});
+    const handler = (e: CustomEvent) => {
+      if (e.detail?.key === 'theme') document.documentElement.setAttribute('data-theme', e.detail.value);
+    };
+    window.addEventListener('loom:setting-change' as any, handler);
+    return () => window.removeEventListener('loom:setting-change' as any, handler);
+  }, []);
+
+  // Check agent status (both modes)
   useEffect(() => {
     const check = () => {
-      (window as any).loom.agent.status().then((s: any) => {
-        setAgentStatus(s.ok ? 'online' : 'offline');
+      (window as any).loom.ai.getConfig().then((c: any) => {
+        setAiMode(c?.mode || 'orca');
+        if (c?.mode === 'orca') {
+          (window as any).loom.ai.checkOrcaStatus().then((s: any) => {
+            setOrcaOnline(s?.ok || false);
+            setAgentStatus(s?.ok ? 'online' : 'offline');
+          }).catch(() => { setOrcaOnline(false); setAgentStatus('offline'); });
+        } else {
+          const provider = c?.providers?.find((p: any) => p.id === c.activeProviderId);
+          setAgentStatus(provider?.apiKey ? 'online' : 'offline');
+        }
       }).catch(() => setAgentStatus('offline'));
     };
     check();
-    const t = setInterval(check, 15000);
+    const t = setInterval(check, 10000);
     return () => clearInterval(t);
+  }, []);
+
+  // Fetch git status
+  useEffect(() => {
+    if (!workspace) { setGitStatusMap({}); return; }
+    const fetchStatus = () => {
+      (window as any).loom?.git?.status?.(workspace).then((result: any) => {
+        const map: Record<string, string> = {};
+        (result?.changes || []).forEach((c: any) => { if (c.file) map[c.file] = c.status; });
+        setGitStatusMap(map);
+      }).catch(() => setGitStatusMap({}));
+    };
+    fetchStatus();
+    const t = setInterval(fetchStatus, 5000);
+    return () => clearInterval(t);
+  }, [workspace]);
+
+  // File watcher - auto-refresh on external changes
+  useEffect(() => {
+    if (!workspace) return;
+    (window as any).loom?.watcher?.start?.(workspace).catch(() => {});
+    const cleanup = (window as any).loom?.watcher?.onChange?.((_cwd: string, changedPaths: string[]) => {
+      // Re-fetch git status when files change externally
+      (window as any).loom?.git?.status?.(workspace).then((result: any) => {
+        const map: Record<string, string> = {};
+        (result?.changes || []).forEach((c: any) => { if (c.file) map[c.file] = c.status; });
+        setGitStatusMap(map);
+      }).catch(() => {});
+    });
+    return () => {
+      (window as any).loom?.watcher?.stop?.().catch(() => {});
+      if (cleanup) cleanup();
+    };
+  }, [workspace]);
+  const addNotification = useCallback((message: string, type: NotificationType = 'info', duration?: number) => {
+    const id = 'n' + (++notifIdRef.current);
+    setNotifications(prev => [...prev, { id, type, message, duration }]);
+  }, []);
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
+  // Listen for loom:notify events
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const { message, type, duration } = e.detail || {};
+      if (message) addNotification(message, type || 'info', duration);
+    };
+    window.addEventListener('loom:notify' as any, handler);
+    return () => window.removeEventListener('loom:notify' as any, handler);
+  }, [addNotification]);
+
+  // Listen for clear output events
+  useEffect(() => {
+    const handler = () => setOutputLines([]);
+    window.addEventListener('loom:clear-output' as any, handler);
+    return () => window.removeEventListener('loom:clear-output' as any, handler);
+  }, []);
+
+  // Listen for diagnostics from Monaco editor
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      setProblems(e.detail || []);
+    };
+    window.addEventListener('loom:diagnostics' as any, handler);
+    return () => window.removeEventListener('loom:diagnostics' as any, handler);
   }, []);
 
   // Update window title
@@ -74,9 +178,36 @@ export default function App() {
   }, [openFiles, activeIdx]);
 
   const openFileFromDisk = async () => {
-    const result = await (window as any).loom.dialog.openFile();
-    if (!result) return;
-    addOrFocusFile(result.path, result.content);
+    const files = await (window as any).loom.dialog.openFile();
+    if (!files) return;
+    const fileList = Array.isArray(files) ? files : [files];
+    if (fileList.length === 0) return;
+
+    const currentOpen = openFiles;
+    const toAdd: OpenFile[] = [];
+    let focused = -1;
+
+    for (const f of fileList) {
+      const existing = currentOpen.findIndex(of => of.path === f.path);
+      if (existing >= 0) { focused = existing; continue; }
+      toAdd.push({
+        path: f.path,
+        name: f.path.split(/[\\/]/).pop() || 'untitled',
+        content: f.content,
+        language: detectLang(f.path),
+        originalContent: f.content,
+      });
+    }
+
+    if (toAdd.length > 0) {
+      const lastNewIdx = currentOpen.length + toAdd.length - 1;
+      setOpenFiles(prev => [...prev, ...toAdd]);
+      setActiveIdx(lastNewIdx);
+      setSelectedFile(toAdd[toAdd.length - 1].path);
+    } else if (focused >= 0) {
+      setActiveIdx(focused);
+      setSelectedFile(currentOpen[focused].path);
+    }
   };
 
   const openFolder = async () => {
@@ -94,9 +225,19 @@ export default function App() {
       language: detectLang(filePath),
       originalContent: content,
     };
-    setOpenFiles(prev => [...prev, nf]);
-    setActiveIdx(openFiles.length);
+    setOpenFiles(prev => {
+      const next = [...prev, nf];
+      queueMicrotask(() => setActiveIdx(next.length - 1));
+      return next;
+    });
+    // BUGFIX: openFiles is stale in closure, use prev length from setOpenFiles callback
     setSelectedFile(filePath);
+  };
+
+  const createUntitledFile = () => {
+    const name = 'untitled-' + untitledCount;
+    setUntitledCount(c => c + 1);
+    addOrFocusFile(name, '');
   };
 
   const handleContentChange = (filePath: string, newContent: string) => {
@@ -109,23 +250,30 @@ export default function App() {
     try {
       await (window as any).loom.fs.writeFile(f.path, f.content);
       setOpenFiles(prev => prev.map((x, i) => i === activeIdx ? { ...x, originalContent: x.content } : x));
-      addOutput(`Saved: ${f.name}`);
+      addNotification(`已保存: ${f.name}`, 'success');
     } catch (e: any) {
-      addOutput(`Error saving ${f.name}: ${e.message}`);
+      addNotification(`保存失败 ${f.name}: ${e.message}`, 'error');
     }
   };
 
   const saveAllFiles = async () => {
+    const failed: string[] = [];
     for (let i = 0; i < openFiles.length; i++) {
       const f = openFiles[i];
       if (f.content !== f.originalContent) {
         try {
           await (window as any).loom.fs.writeFile(f.path, f.content);
-        } catch {}
+        } catch (e: any) {
+          failed.push(f.name);
+        }
       }
     }
-    setOpenFiles(prev => prev.map(f => ({ ...f, originalContent: f.content })));
-    addOutput('All files saved.');
+    if (failed.length > 0) {
+      addNotification(`保存失败: ${failed.join(', ')}`, 'error');
+    }
+    const savedPaths = new Set(openFiles.filter((_, i) => !failed.includes(openFiles[i].name)).map(f => f.path));
+    setOpenFiles(prev => prev.map(f => savedPaths.has(f.path) ? { ...f, originalContent: f.content } : f));
+    if (failed.length === 0) addNotification('所有文件已保存', 'success');
   };
 
   const addOutput = (msg: string) => {
@@ -237,8 +385,8 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 's') { e.preventDefault(); if (e.shiftKey) saveAllFiles(); else saveFile(); }
-      else if (e.ctrlKey && e.key === 'o') { e.preventDefault(); openFileFromDisk(); }
-      else if (e.ctrlKey && e.key === 'k') { e.preventDefault(); openFolder(); }
+      else if (e.ctrlKey && e.key === 'o' && e.shiftKey) { e.preventDefault(); openFileFromDisk(); }
+      else if (e.ctrlKey && e.key === 'o' && !e.shiftKey) { e.preventDefault(); openFolder(); }
       else if (e.ctrlKey && e.shiftKey && e.key === 'P') { e.preventDefault(); setCmdPalette(p => !p); }
       else if (e.ctrlKey && e.key === '`') { e.preventDefault(); setPanelVisible(p => !p); }
       else if (e.ctrlKey && e.key === 'b') { e.preventDefault(); setSidebarView(v => v ? '' : 'explorer'); }
@@ -255,15 +403,16 @@ export default function App() {
       else if (e.shiftKey && e.altKey && e.key === 'F') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })); }
       else if (e.ctrlKey && e.key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })); }
       else if (e.ctrlKey && e.shiftKey && e.code === 'Slash') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleBlockComment' } })); }
-      else if (e.ctrlKey && e.key === 'n') { e.preventDefault(); addOrFocusFile('untitled-' + Date.now(), ''); }
-      else if (e.ctrlKey && e.key === 'p') { e.preventDefault(); openFileFromDisk(); }
+      else if (e.ctrlKey && e.key === 'n') { e.preventDefault(); createUntitledFile(); }
+      else if (e.ctrlKey && e.key === 'p') { e.preventDefault(); setCmdPalette(true); }
+      else if (e.ctrlKey && e.key === '\\') { e.preventDefault(); toggleSplit(); }
       // Debugger shortcuts
       else if (e.key === 'F5' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); if (isDebugging) addOutput('Debug: Continue (F5)'); else startDebug(); }
+      else if (e.ctrlKey && e.shiftKey && e.key === 'F5') { e.preventDefault(); addOutput('Debug: Restart (Ctrl+Shift+F5)'); stopDebug().then(() => startDebug()); }
       else if (e.shiftKey && e.key === 'F5') { e.preventDefault(); stopDebug(); }
       else if (e.key === 'F10') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Over (F10) - Continue execution'); else addOutput('Debug: No active session. Press F5 to start.'); }
       else if (e.key === 'F11') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Into (F11) - Enter function'); else addOutput('Debug: No active session. Press F5 to start.'); }
       else if (e.shiftKey && e.key === 'F11') { e.preventDefault(); if (isDebugging) addOutput('Debug: Step Out (Shift+F11) - Exit function'); else addOutput('Debug: No active session. Press F5 to start.'); }
-      else if (e.ctrlKey && e.shiftKey && e.key === 'F5') { e.preventDefault(); addOutput('Debug: Restart (Ctrl+Shift+F5)'); stopDebug().then(() => startDebug()); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -275,7 +424,7 @@ export default function App() {
       const cmd = e.detail;
       if (cmd === 'openFile') openFileFromDisk();
       if (cmd === 'openFolder') openFolder();
-      if (cmd === 'newFile') addOrFocusFile('untitled-' + Date.now(), '');
+      if (cmd === 'newFile') createUntitledFile();
     };
     window.addEventListener('loom:cmd' as any, handler);
     return () => window.removeEventListener('loom:cmd' as any, handler);
@@ -285,9 +434,9 @@ export default function App() {
     {
       label: 'File',
       items: [
-        { label: 'New File', shortcut: 'Ctrl+N', action: () => addOrFocusFile('untitled', '') },
+        { label: 'New File', shortcut: 'Ctrl+N', action: () => createUntitledFile() },
         { label: 'Open File...', shortcut: 'Ctrl+O', action: openFileFromDisk },
-        { label: 'Open Folder...', shortcut: 'Ctrl+K', action: openFolder },
+        { label: 'Open Folder...', shortcut: 'Ctrl+O', action: openFolder },
         { separator: true, label: '' },
         { label: 'Save', shortcut: 'Ctrl+S', action: saveFile },
         { label: 'Save All', shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
@@ -306,8 +455,8 @@ export default function App() {
         { label: 'Undo', shortcut: 'Ctrl+Z', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'undo' } })); } },
         { label: 'Redo', shortcut: 'Ctrl+Y', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'redo' } })); } },
         { separator: true, label: '' },
-        { label: 'Find', shortcut: 'Ctrl+F', action: () => {} },
-        { label: 'Replace', shortcut: 'Ctrl+H', action: () => {} },
+        { label: 'Find', shortcut: 'Ctrl+F', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'find' } })); } },
+        { label: 'Replace', shortcut: 'Ctrl+H', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'replace' } })); } },
         { separator: true, label: '' },
         { label: 'Find in Files', shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
       ],
@@ -347,7 +496,7 @@ export default function App() {
 
   const commands = [
     { id: 'file.open', label: 'File: Open File', shortcut: 'Ctrl+O', action: openFileFromDisk },
-    { id: 'folder.open', label: 'File: Open Folder', shortcut: 'Ctrl+K', action: openFolder },
+    { id: 'folder.open', label: 'File: Open Folder', shortcut: 'Ctrl+O', action: openFolder },
     { id: 'file.save', label: 'File: Save', shortcut: 'Ctrl+S', action: saveFile },
     { id: 'file.saveAll', label: 'File: Save All', shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
     { id: 'view.explorer', label: 'View: Show Explorer', shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
@@ -357,13 +506,38 @@ export default function App() {
     { id: 'view.terminal', label: 'View: Toggle Terminal', shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
     { id: 'view.sidebar', label: 'View: Toggle Sidebar', shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
     { id: 'view.commandPalette', label: 'View: Command Palette', shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
+    { id: 'view.splitEditor', label: 'View: Split Editor', shortcut: 'Ctrl+\\', action: toggleSplit },
     { id: 'ai.toggle', label: 'AI: Toggle Orca Agent', action: () => setAiOpen(p => !p) },
     { id: 'settings.open', label: 'Preferences: Open Settings', shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
-    { id: 'editor.wordwrap', label: 'View: Toggle Word Wrap', shortcut: 'Alt+Z', action: () => {} },
-    { id: 'editor.minimap', label: 'View: Toggle Minimap', action: () => {} },
+    { id: 'editor.wordwrap', label: 'View: Toggle Word Wrap', shortcut: 'Alt+Z', action: () => window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'editor.wordWrap', value: '' } })) },
+    { id: 'editor.minimap', label: 'View: Toggle Minimap', action: () => { minimapRef.current = !minimapRef.current; window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'editor.minimap', value: minimapRef.current } })); } },
     { id: 'editor.format', label: 'Format Document', shortcut: 'Shift+Alt+F', action: () => addOutput('Format document...') },
     { id: 'theme.dark', label: 'Color Theme: Dark+ (Default)', action: () => {} },
   ];
+
+  const reorderTabs = (from: number, to: number) => {
+    setOpenFiles(prev => {
+      const arr = [...prev];
+      const [item] = arr.splice(from, 1);
+      arr.splice(to, 0, item);
+      return arr;
+    });
+    if (activeIdx === from) setActiveIdx(to);
+    else if (from < activeIdx && to >= activeIdx) setActiveIdx(a => a - 1);
+    else if (from > activeIdx && to <= activeIdx) setActiveIdx(a => a + 1);
+  };
+
+  const toggleSplit = () => {
+    setSplitMode(prev => {
+      if (!prev) { setSplitIdx(activeIdx); setSplitRatio(50); setFocusSide('left'); }
+      return !prev;
+    });
+  };
+
+  const closeSplit = (side: 'left' | 'right') => {
+    setSplitMode(false);
+    if (side === 'right') setActiveIdx(splitIdx >= 0 ? splitIdx : activeIdx);
+  };
 
   const activeFile = openFiles[activeIdx] || null;
   const hasDirty = openFiles.some(f => f.content !== f.originalContent);
@@ -375,7 +549,7 @@ export default function App() {
         <ActivityBar activeView={sidebarView} onViewChange={setSidebarView} aiOpen={aiOpen} onToggleAI={() => setAiOpen(!aiOpen)} onSettings={() => setSettingsOpen(true)} />
         {sidebarView && (
           <div style={{ position: 'relative' }}>
-            <Sidebar view={sidebarView} workspacePath={workspace} onOpenFile={addOrFocusFile} onOpenFolder={openFolder} selectedFile={selectedFile} sidebarWidth={sidebarWidth} />
+              <Sidebar view={sidebarView} workspacePath={workspace} onOpenFile={addOrFocusFile} onOpenFolder={openFolder} selectedFile={selectedFile} sidebarWidth={sidebarWidth} gitStatusMap={gitStatusMap} />
             <div className="resize-handle resize-handle-v" style={{ right: -2 }}
               onMouseDown={(e) => {
                 const startX = e.clientX;
@@ -390,48 +564,52 @@ export default function App() {
         )}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
           <div className="editor-area" style={{ flex: 1 }}>
-            {openFiles.length > 0 && (
-              <div className="tabs-container">
-                {openFiles.map((f, i) => {
-                  const dirty = f.content !== f.originalContent;
-                  return (
-                    <div key={f.path} className={`tab ${i === activeIdx ? 'active' : ''}`}
-                      onClick={() => setActiveIdx(i)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        // Could add context menu here
-                      }}>
-                      <span className="tab-name">{f.name}</span>
-                      {dirty && <span className="tab-modified" />}
-                      <button className="tab-close" onClick={(e) => { e.stopPropagation(); closeTab(i); }}>
-                        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.4"/></svg>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+            {openFiles.length > 0 && !splitMode && (
+              <TabBar
+                files={openFiles}
+                activeIdx={activeIdx}
+                onSelect={setActiveIdx}
+                onClose={closeTab}
+                onCloseAll={closeAllTabs}
+                onCloseOthers={closeOtherTabs}
+                onReorder={reorderTabs}
+              />
             )}
-            {activeFile && (
-              <div className="breadcrumb">
-                {activeFile.path.split(/[\\/]/).map((seg, i, arr) => (
-                  <React.Fragment key={i}>
-                    <span className="breadcrumb-item">{seg}</span>
-                    {i < arr.length - 1 && <span className="breadcrumb-sep">&rsaquo;</span>}
-                  </React.Fragment>
-                ))}
-              </div>
+            {activeFile && !splitMode && (
+              <Breadcrumb filePath={activeFile.path} onOpenFile={addOrFocusFile} />
             )}
             <div className="editor-wrapper">
-              <Editor file={activeFile} openFilePaths={openFiles.map(f => f.path)} onContentChange={handleContentChange} />
+              <ErrorBoundary name="编辑器">
+              {splitMode ? (
+                <EditorGroup
+                  openFiles={openFiles}
+                  leftIdx={activeIdx}
+                  rightIdx={splitIdx}
+                  splitDirection="horizontal"
+                  splitRatio={splitRatio}
+                  onLeftIdxChange={setActiveIdx}
+                  onRightIdxChange={setSplitIdx}
+                  onRatioChange={setSplitRatio}
+                  onContentChange={handleContentChange}
+                  onCloseSplit={closeSplit}
+                  onFocusSide={setFocusSide}
+                  focusSide={focusSide}
+                  workspacePath={workspace}
+                />
+              ) : (
+                <Editor file={activeFile} openFilePaths={openFiles.map(f => f.path)} onContentChange={handleContentChange} workspacePath={workspace} />
+              )}
+              </ErrorBoundary>
             </div>
           </div>
           <Panel visible={panelVisible} height={panelHeight} onClose={() => setPanelVisible(false)} onResize={setPanelHeight} problems={problems} outputLines={outputLines} />
         </div>
-        {aiOpen && <AIAgent workspacePath={workspace} onClose={() => setAiOpen(false)} />}
+        {aiOpen && <ErrorBoundary name="AI 面板"><AIAgent workspacePath={workspace} onClose={() => setAiOpen(false)} openFiles={openFiles.map(f => ({ path: f.path, name: f.name, content: f.content }))} onOpenFile={addOrFocusFile} onApplyEdit={(filePath, content) => { handleContentChange(filePath, content); addOrFocusFile(filePath, content); }} /></ErrorBoundary>}
       </div>
-      <StatusBar workspacePath={workspace} activeFile={activeFile} agentStatus={agentStatus} />
-      <CommandPalette visible={cmdPalette} commands={commands} onClose={() => setCmdPalette(false)} />
+      <StatusBar workspacePath={workspace} activeFile={activeFile} agentStatus={agentStatus} aiMode={aiMode} orcaOnline={orcaOnline} />
+      <CommandPalette visible={cmdPalette} commands={commands} onClose={() => setCmdPalette(false)} workspacePath={workspace} onOpenFile={addOrFocusFile} />
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      <NotificationContainer notifications={notifications} onDismiss={dismissNotification} />
     </div>
   );
 }

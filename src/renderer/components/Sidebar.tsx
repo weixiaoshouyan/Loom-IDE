@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import FileTree, { OutlineView } from './FileTree';
 
 interface Props {
@@ -8,10 +8,20 @@ interface Props {
   onOpenFolder: () => void;
   selectedFile: string;
   sidebarWidth: number;
+  gitStatusMap?: Record<string, string>;
+}
+
+interface ExtInfo {
+  id: string;
+  name: string;
+  description: string;
+  installed: boolean;
+  version: string;
+  author: string;
 }
 
 // ====== Explorer View ======
-function ExplorerView({ workspacePath, onOpenFile, onOpenFolder, selectedFile }: { workspacePath: string; onOpenFile: (path: string, content: string) => void; onOpenFolder: () => void; selectedFile: string }) {
+function ExplorerView({ workspacePath, onOpenFile, onOpenFolder, selectedFile, gitStatusMap }: { workspacePath: string; onOpenFile: (path: string, content: string) => void; onOpenFolder: () => void; selectedFile: string; gitStatusMap?: Record<string, string> }) {
   const [creating, setCreating] = useState<'file' | 'folder' | null>(null);
   const [newName, setNewName] = useState('');
 
@@ -40,6 +50,7 @@ function ExplorerView({ workspacePath, onOpenFile, onOpenFolder, selectedFile }:
         <div className="sidebar-header-actions">
           <button className="sidebar-header-btn" title="New File" onClick={() => { setCreating('file'); setNewName(''); }}><svg viewBox="0 0 16 16" width="16" height="16"><path d="M9 1H4a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V6l-5-5z" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M9 1v5h5" fill="none" stroke="currentColor" strokeWidth="1"/></svg></button>
           <button className="sidebar-header-btn" title="New Folder" onClick={() => { setCreating('folder'); setNewName(''); }}><svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 3a1 1 0 011-1h3.146a.5.5 0 01.354.146L6.707 3.354a.5.5 0 00.354.146H14a1 1 0 011 1v8a1 1 0 01-1 1H2a1 1 0 01-1-1V3z" fill="none" stroke="currentColor" strokeWidth="1"/></svg></button>
+          <button className="sidebar-header-btn" title="Collapse All" onClick={() => window.dispatchEvent(new CustomEvent('loom:collapse-all'))}><svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 4l7-3 7 3v8l-7 3-7-3V4z" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M1 4l7 3 7-3M8 7v8" fill="none" stroke="currentColor" strokeWidth="0.8" opacity="0.5"/></svg></button>
           <button className="sidebar-header-btn" title="Refresh" onClick={() => window.dispatchEvent(new CustomEvent('loom:refresh-tree'))}><svg viewBox="0 0 16 16" width="16" height="16"><path d="M13 8a5 5 0 01-9.33 2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M3 8a5 5 0 019.33-2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M11 4l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M5 12L3 10l2-2" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg></button>
           <button className="sidebar-header-btn" title="Open Folder" onClick={onOpenFolder}><svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 3.5A1.5 1.5 0 012.5 2h3.146a.5.5 0 01.354.146L7.207 3.293a.5.5 0 00.354.146H13.5A1.5 1.5 0 0115 4.5v8a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 12.5v-9z" fill="none" stroke="currentColor" strokeWidth="1"/></svg></button>
         </div>
@@ -58,7 +69,7 @@ function ExplorerView({ workspacePath, onOpenFile, onOpenFolder, selectedFile }:
                 <button className="settings-btn-sm" onClick={() => { setCreating(null); setNewName(''); }}>Cancel</button>
               </div>
             )}
-            <FileTree workspacePath={workspacePath} onOpenFile={onOpenFile} selectedFile={selectedFile} />
+            <FileTree workspacePath={workspacePath} onOpenFile={onOpenFile} selectedFile={selectedFile} gitStatusMap={gitStatusMap} />
           </div>
         ) : (
           <div style={{ padding: '16px', textAlign: 'center' }}>
@@ -149,8 +160,9 @@ function SearchView({ workspacePath, onOpenFile }: { workspacePath: string; onOp
             </div>
           )}
           <div className="search-results">
-            {searching && <div style={{ padding: '8px', color: 'var(--text-muted)' }}>Searching...</div>}
-            {!searching && results.length === 0 && query && <div style={{ padding: '8px', color: 'var(--text-muted)' }}>No results found</div>}
+            {searching && <div className="panel-empty-state"><svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2"/></svg><div>Searching...</div></div>}
+            {!searching && results.length === 0 && query && <div className="panel-empty-state"><svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2"/><line x1="5" y1="5" x2="9" y2="9" stroke="currentColor" strokeWidth="1.2"/><line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1.2"/></svg><div>No results found</div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Try different search terms</div></div>}
+            {!searching && results.length === 0 && !query && <div className="panel-empty-state"><svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2"/></svg><div>Search across files</div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Type to search in workspace</div></div>}
             {!searching && results.length > 0 && (
               <div style={{ padding: '4px 8px', color: 'var(--text-muted)', fontSize: '11px', borderBottom: '1px solid var(--border)', marginBottom: '4px' }}>
                 {totalMatches} results in {results.length} files
@@ -164,7 +176,7 @@ function SearchView({ workspacePath, onOpenFile }: { workspacePath: string; onOp
                 </div>
                 {r.lines.map((l, j) => (
                   <div key={j} className="search-result-line" style={{ cursor: 'pointer' }}
-                    onClick={() => onOpenFile(r.file, '')}>
+                    onClick={async () => { const content = await (window as any).loom.fs.readFile(r.file); onOpenFile(r.file, content); }}>
                     <span className="search-result-line-num">{l.num}</span>
                     {l.text.substring(0, 80)}
                   </div>
@@ -215,7 +227,7 @@ function GitView({ workspacePath }: { workspacePath: string }) {
   const switchBranch = async (branch: string) => { setActionMsg(`Switching to ${branch}...`); await (window as any).loom.git?.checkout?.(workspacePath, branch); setActionMsg(''); refresh(); window.dispatchEvent(new CustomEvent('loom:refresh-tree')); };
 
   const statusIcons: Record<string, string> = {
-    'M': '➕', 'A': '+', 'D': '✖', 'U': '↻', '?': '?'
+    'M': 'M', 'A': '+', 'D': 'D', 'U': 'U', '?': '?'
   };
   const statusColors: Record<string, string> = {
     'M': 'var(--yellow)', 'A': 'var(--green)', 'D': 'var(--red)',
@@ -283,8 +295,10 @@ function GitView({ workspacePath }: { workspacePath: string }) {
 
             {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: 4 }}>Loading...</div>}
             {!loading && changes.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '16px 0', textAlign: 'center' }}>
-                {workspacePath ? 'No changes detected' : 'Open a folder with git'}
+              <div className="panel-empty-state">
+                <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><circle cx="4" cy="4" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="8" r="1.5" fill="currentColor"/><path d="M4 5.5v5M5.5 4h4.5a2 2 0 012 2v0" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+                <div>{workspacePath ? 'No changes detected' : 'No repository found'}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{workspacePath ? 'Your working tree is clean' : 'Open a folder with git initialized'}</div>
               </div>
             )}
 
@@ -313,7 +327,7 @@ function GitView({ workspacePath }: { workspacePath: string }) {
                 {branches.map(b => (
                   <div key={b} className="tree-item" style={{ paddingLeft: 8, fontSize: 12, color: b === currentBranch ? 'var(--accent)' : 'var(--text-primary)', gap: 6 }}
                     onClick={() => { if (b !== currentBranch) switchBranch(b); }}>
-                    {b === currentBranch && <span style={{ color: 'var(--accent)' }}>●</span>}
+                    {b === currentBranch && <span style={{ color: 'var(--accent)' }}>?</span>}
                     {b !== currentBranch && <span style={{ width: 10 }} />}
                     {b}
                   </div>
@@ -330,17 +344,25 @@ function GitView({ workspacePath }: { workspacePath: string }) {
 }
 
 // ====== Extensions View ======
-interface ExtInfo { id: string; name: string; description: string; installed: boolean; version: string; author: string; }
 
 function ExtensionsView({}: {}) {
-  const [extensions, setExtensions] = useState<ExtInfo[]>([
-    { id: 'builtin-monaco', name: 'Monaco Editor', description: 'Full-featured code editor powered by Monaco', installed: true, version: '0.52.0', author: 'Microsoft' },
-    { id: 'builtin-terminal', name: 'Integrated Terminal', description: 'Built-in terminal with xterm.js', installed: true, version: '1.0.0', author: 'Loom' },
-    { id: 'builtin-git', name: 'Git Integration', description: 'Source control management', installed: true, version: '1.0.0', author: 'Loom' },
-    { id: 'builtin-ai', name: 'Orca AI Agent', description: 'AI-powered coding assistant', installed: true, version: '2.1.0', author: 'Orca' },
-    { id: 'builtin-search', name: 'Search', description: 'Full-text search across workspace', installed: true, version: '1.0.0', author: 'Loom' },
-  ]);
+  const [extensions, setExtensions] = useState<ExtInfo[]>([]);
   const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    (window as any).loom?.plugins?.getAll?.().then((plugins: any[]) => {
+      const exts: ExtInfo[] = plugins.map(p => ({
+        id: p.id,
+        name: p.manifest?.displayName || p.manifest?.name || p.id,
+        description: p.manifest?.description || '',
+        installed: true,
+        version: p.manifest?.version || '1.0.0',
+        author: p.manifest?.author || 'Unknown',
+      }));
+      setExtensions(exts);
+    }).catch(() => {});
+  }, []);
+
   const filtered = extensions.filter(e => e.name.toLowerCase().includes(filter.toLowerCase()) || e.description.toLowerCase().includes(filter.toLowerCase()));
 
   return (
@@ -360,7 +382,7 @@ function ExtensionsView({}: {}) {
                 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ext.version}</span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ext.description}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>{ext.author} · {ext.installed ? 'Installed' : 'Not installed'}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>{ext.author} ? {ext.installed ? 'Installed' : 'Not installed'}</div>
             </div>
           ))}
         </div>
@@ -370,11 +392,11 @@ function ExtensionsView({}: {}) {
 }
 
 // ====== Main Sidebar ======
-export default function Sidebar({ view, workspacePath, onOpenFile, onOpenFolder, selectedFile, sidebarWidth }: Props) {
+export default function Sidebar({ view, workspacePath, onOpenFile, onOpenFolder, selectedFile, sidebarWidth, gitStatusMap }: Props) {
   if (!view) return null;
   return (
     <div className="sidebar" style={{ width: sidebarWidth }}>
-      {view === 'explorer' && <ExplorerView workspacePath={workspacePath} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} selectedFile={selectedFile} />}
+      {view === 'explorer' && <ExplorerView workspacePath={workspacePath} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} selectedFile={selectedFile} gitStatusMap={gitStatusMap} />}
       {view === 'search' && <SearchView workspacePath={workspacePath} onOpenFile={onOpenFile} />}
       {view === 'git' && <GitView workspacePath={workspacePath} />}
       {view === 'extensions' && <ExtensionsView />}

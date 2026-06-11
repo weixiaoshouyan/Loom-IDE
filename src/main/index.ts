@@ -1,11 +1,26 @@
-﻿import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
-import { OrcaAgent, ChatMessage } from '../agent/connector';
+import type { IPty } from 'node-pty';
+import { AIEngine, AIConfig, ChatMessage, AIProvider, AgentProfile } from '../agent/ai-engine';
+import { PluginManager, PluginManifest } from './plugin-manager';
+import { SkillManager } from '../agent/skills';
+import { MCPClient, MCPServerConfig } from '../agent/mcp-client';
+
+let ptySpawn: any = null;
+function getPty() {
+  if (!ptySpawn) {
+    try { ptySpawn = require('node-pty').spawn; } catch { return null; }
+  }
+  return ptySpawn;
+}
 
 let mainWindow: BrowserWindow | null = null;
-let orcaAgent: OrcaAgent | null = null;
+let aiEngine: AIEngine | null = null;
+let pluginManager: PluginManager | null = null;
+let skillManager: SkillManager | null = null;
+let mcpClient: MCPClient | null = null;
 
 // ====== Config / Settings ======
 const userData = app.getPath('userData');
@@ -20,17 +35,15 @@ function loadConfig(): any {
   ensureDataDir();
   if (!fs.existsSync(configPath)) {
     const defaultConfig = {
-      activeProviderId: 'deepseek',
-      providerKeys: {},
-      activeModel: {},
-      customProvider: { name: '', baseUrl: '', apiKey: '', models: '' },
-      orcaPort: 18080,
+      aiConfig: null as AIConfig | null,
       theme: 'dark',
       editor: {
         fontSize: 14, fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
         tabSize: 2, wordWrap: 'off', minimap: true, lineNumbers: true,
         cursorBlinking: 'blink', smoothScrolling: true, formatOnSave: false, autoSave: 'off',
       },
+      recentFolders: [] as string[],
+      windowState: { width: 1400, height: 900, x: undefined as number | undefined, y: undefined as number | undefined, maximized: false },
     };
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
     return defaultConfig;
@@ -44,23 +57,46 @@ function saveConfig(config: any) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
-function getOrcaPort(): number {
+function initAIEngine() {
   const cfg = loadConfig();
-  return cfg.orcaPort || 18080;
+  aiEngine = new AIEngine(cfg.aiConfig || undefined);
+  aiEngine.onUpdateConfig((newAiCfg) => {
+    const fullCfg = loadConfig();
+    fullCfg.aiConfig = newAiCfg;
+    saveConfig(fullCfg);
+  });
 }
 
-function initAgent() {
-  const port = getOrcaPort();
-  orcaAgent = new OrcaAgent(`http://127.0.0.1:${port}`);
+function initPluginManager() {
+  pluginManager = new PluginManager();
+}
+
+function initSkillManager() {
+  skillManager = new SkillManager();
+}
+
+function initMCPClient() {
+  const cfg = loadConfig();
+  mcpClient = new MCPClient(cfg.mcpServers || undefined);
+  mcpClient.onUpdateConfig((servers) => {
+    const fullCfg = loadConfig();
+    fullCfg.mcpServers = servers;
+    saveConfig(fullCfg);
+  });
+  // Auto-connect to enabled MCP servers
+  setTimeout(() => mcpClient?.reconnectAll(), 1000);
 }
 
 // ====== Window ======
 function createWindow() {
   const cfg = loadConfig();
   const theme = cfg.theme || 'dark';
+  const ws = cfg.windowState || {};
 
   mainWindow = new BrowserWindow({
-    width: 1400, height: 900, minWidth: 900, minHeight: 600,
+    width: ws.width || 1400, height: ws.height || 900,
+    x: ws.x, y: ws.y,
+    minWidth: 900, minHeight: 600,
     title: 'Loom IDE',
     icon: path.join(__dirname, '../../resources/icon.png'),
     frame: false,
@@ -77,6 +113,8 @@ function createWindow() {
     },
   });
 
+  if (ws.maximized) mainWindow.maximize();
+
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5174');
     mainWindow.webContents.openDevTools();
@@ -87,59 +125,339 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
+
+  // Save window state on close
+  mainWindow.on('close', () => {
+    if (!mainWindow) return;
+    const isMax = mainWindow.isMaximized();
+    const bounds = mainWindow.getBounds();
+    const cfg = loadConfig();
+    cfg.windowState = { width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y, maximized: isMax };
+    saveConfig(cfg);
+  });
 }
 
-// ====== Agent streaming ======
+// ====== AI Agent Streaming ======
 const activeStreams = new Map<string, { abort: boolean }>();
 
-ipcMain.handle('agent:chat', async (_event: any, messages: ChatMessage[], context?: string) => {
-  if (!orcaAgent) initAgent();
-  return orcaAgent!.chat(messages, context);
+ipcMain.handle('ai:chat', async (_event: any, messages: ChatMessage[], context?: string) => {
+  if (!aiEngine) initAIEngine();
+  return aiEngine!.chat(messages, context);
 });
 
-ipcMain.on('agent:chat-stream', (event: any, id: string, messages: ChatMessage[], context?: string) => {
-  if (!orcaAgent) initAgent();
+ipcMain.on('ai:chat-stream', (event: any, id: string, messages: ChatMessage[], context?: string) => {
+  if (!aiEngine) initAIEngine();
   const streamState = { abort: false };
   activeStreams.set(id, streamState);
   (async () => {
     try {
-      const generator = orcaAgent!.chatStream(messages, context);
+      const generator = aiEngine!.chatStream(messages, context);
       for await (const chunk of generator) {
         if (streamState.abort) break;
-        event.sender.send('agent:chat-stream-chunk', id, chunk);
+        event.sender.send('ai:chat-stream-chunk', id, chunk);
       }
-      event.sender.send('agent:chat-stream-end', id);
+      event.sender.send('ai:chat-stream-end', id);
     } catch (e: any) {
-      event.sender.send('agent:chat-stream-error', id, e.message || 'Unknown error');
+      event.sender.send('ai:chat-stream-error', id, e.message || 'Unknown error');
     } finally {
       activeStreams.delete(id);
     }
   })();
 });
 
-ipcMain.on('agent:chat-stream-abort', (_event: any, id: string) => {
+ipcMain.on('ai:chat-stream-abort', (_event: any, id: string) => {
   const s = activeStreams.get(id);
   if (s) s.abort = true;
 });
 
-ipcMain.handle('agent:list-skills', async () => {
-  if (!orcaAgent) initAgent();
-  return orcaAgent!.listSkills();
+// ====== Agent Mode Chat (with tool calling) ======
+ipcMain.on('ai:agent-chat-stream', (event: any, id: string, messages: any[], workspacePath: string, openFiles?: any[]) => {
+  if (!aiEngine) initAIEngine();
+  const streamState = { abort: false };
+  activeStreams.set(id, streamState);
+  (async () => {
+    try {
+      const generator = aiEngine!.agentChatStream(messages, {
+        workspacePath,
+        openFiles: openFiles || [],
+        diagnostics: [],
+        onFileCreated: (filePath, content) => {
+          event.sender.send('ai:agent-file-created', id, filePath, content);
+        },
+        onFileChanged: (filePath, content) => {
+          event.sender.send('ai:agent-file-changed', id, filePath, content);
+        },
+      }, 15);
+      
+      for await (const chunk of generator) {
+        if (streamState.abort) break;
+        event.sender.send('ai:agent-chat-chunk', id, chunk);
+      }
+      event.sender.send('ai:agent-chat-end', id);
+    } catch (e: any) {
+      event.sender.send('ai:agent-chat-error', id, e.message || 'Unknown error');
+    } finally {
+      activeStreams.delete(id);
+    }
+  })();
 });
-ipcMain.handle('agent:get-skill', async (_e: any, id: string) => {
-  if (!orcaAgent) initAgent();
-  return orcaAgent!.getSkill(id);
+
+ipcMain.handle('ai:getConfig', () => {
+  if (!aiEngine) initAIEngine();
+  return aiEngine!.getConfig();
 });
-ipcMain.handle('agent:status', async () => {
-  if (!orcaAgent) initAgent();
-  return orcaAgent!.getStatus();
+
+ipcMain.handle('ai:updateConfig', (_e: any, patch: Partial<AIConfig>) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.updateConfig(patch);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:updateProvider', (_e: any, id: string, patch: Partial<AIProvider>) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.updateProvider(id, patch);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:addProvider', (_e: any, provider: AIProvider) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.addProvider(provider);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:removeProvider', (_e: any, id: string) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.removeProvider(id);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:updateProfile', (_e: any, id: string, patch: Partial<AgentProfile>) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.updateProfile(id, patch);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:addProfile', (_e: any, profile: AgentProfile) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.addProfile(profile);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:removeProfile', (_e: any, id: string) => {
+  if (!aiEngine) initAIEngine();
+  aiEngine!.removeProfile(id);
+  return aiEngine!.getConfig();
+});
+
+ipcMain.handle('ai:testConnection', async (_e: any, providerId: string) => {
+  if (!aiEngine) initAIEngine();
+  return aiEngine!.testConnection(providerId);
+});
+
+ipcMain.handle('ai:checkOrcaStatus', async () => {
+  if (!aiEngine) initAIEngine();
+  return aiEngine!.checkOrcaStatus();
+});
+
+ipcMain.handle('ai:getOrcaProviders', async () => {
+  if (!aiEngine) initAIEngine();
+  return aiEngine!.getOrcaProviders();
+});
+
+// ====== File Index (for Quick Open) with mtime cache ======
+let fileIndex: string[] = [];
+let fileIndexCwd = '';
+let fileIndexMtime = 0;
+let fileIndexBuildTime = 0;
+
+function getDirMtime(cwd: string): number {
+  try { return fs.statSync(cwd).mtimeMs; } catch { return 0; }
+}
+
+async function buildFileIndex(cwd: string): Promise<string[]> {
+  const result: string[] = [];
+  const hidden = new Set(['node_modules', '.git', 'dist', 'release', '__pycache__', '.next', 'coverage', '.vscode', '.workbuddy']);
+  async function walk(dir: string, depth: number) {
+    if (depth > 8 || result.length > 10000) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (hidden.has(e.name)) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) await walk(full, depth + 1);
+        else result.push(full);
+      }
+    } catch {}
+  }
+  await walk(cwd, 0);
+  return result;
+}
+
+ipcMain.handle('fs:index-files', async (_e: any, cwd: string) => {
+  const now = Date.now();
+  const dirMtime = getDirMtime(cwd);
+  if (fileIndexCwd === cwd && fileIndex.length > 0 && 
+      fileIndexMtime === dirMtime && (now - fileIndexBuildTime) < 30000) {
+    return fileIndex;
+  }
+  fileIndex = await buildFileIndex(cwd);
+  fileIndexCwd = cwd;
+  fileIndexMtime = dirMtime;
+  fileIndexBuildTime = now;
+  return fileIndex;
+});
+
+ipcMain.handle('fs:search-files', async (_e: any, cwd: string, query: string) => {
+  const now = Date.now();
+  const dirMtime = getDirMtime(cwd);
+  if (fileIndexCwd !== cwd || fileIndex.length === 0 ||
+      fileIndexMtime !== dirMtime || (now - fileIndexBuildTime) >= 30000) {
+    fileIndex = await buildFileIndex(cwd);
+    fileIndexCwd = cwd;
+    fileIndexMtime = dirMtime;
+    fileIndexBuildTime = now;
+  }
+  const q = query.toLowerCase();
+  const scored = fileIndex.map(fp => {
+    const name = fp.split(/[\\/]/).pop()?.toLowerCase() || '';
+    let score = 0;
+    if (name === q) score = 100;
+    else if (name.startsWith(q)) score = 80;
+    else if (name.includes(q)) score = 60;
+    else {
+      let qi = 0;
+      for (let i = 0; i < name.length && qi < q.length; i++) {
+        if (name[i] === q[qi]) qi++;
+      }
+      if (qi === q.length) score = 40;
+      else return null;
+    }
+    return { path: fp, score };
+  }).filter(Boolean).sort((a, b) => (b as any).score - (a as any).score).slice(0, 50);
+  return scored.map((s: any) => s.path);
+});
+
+// ====== Plugin System ======
+ipcMain.handle('plugins:getAll', () => {
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.getAllPlugins().map(p => ({
+    id: p.id,
+    manifest: p.manifest,
+    enabled: p.enabled,
+    builtin: p.builtin,
+    path: p.path,
+  }));
+});
+
+ipcMain.handle('plugins:setEnabled', (_e: any, id: string, enabled: boolean) => {
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.setEnabled(id, enabled);
+});
+
+ipcMain.handle('plugins:install', (_e: any, pluginPath: string) => {
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.installPlugin(pluginPath);
+});
+
+ipcMain.handle('plugins:uninstall', (_e: any, id: string) => {
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.uninstallPlugin(id);
+});
+
+ipcMain.handle('plugins:getCommands', () => {
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.getAllCommands();
+});
+
+ipcMain.handle('plugins:installFromFile', async () => {
+  if (!mainWindow) return { ok: false, msg: 'No window' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Plugin Folder',
+  });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, msg: 'Cancelled' };
+  if (!pluginManager) initPluginManager();
+  return pluginManager!.installPlugin(result.filePaths[0]);
+});
+
+// ====== Skills IPC ======
+ipcMain.handle('skills:getAll', () => {
+  if (!skillManager) initSkillManager();
+  return skillManager!.getAll();
+});
+
+ipcMain.handle('skills:getByCategory', (_e: any, category: string) => {
+  if (!skillManager) initSkillManager();
+  return skillManager!.getByCategory(category as any);
+});
+
+ipcMain.handle('skills:resolvePrompt', (_e: any, skillId: string, variables: Record<string, string>) => {
+  if (!skillManager) initSkillManager();
+  return skillManager!.resolvePrompt(skillId, variables);
+});
+
+// ====== MCP IPC ======
+ipcMain.handle('mcp:getServers', () => {
+  if (!mcpClient) initMCPClient();
+  return mcpClient!.getAllServers();
+});
+
+ipcMain.handle('mcp:addServer', (_e: any, config: MCPServerConfig) => {
+  if (!mcpClient) initMCPClient();
+  mcpClient!.addServer(config);
+  return true;
+});
+
+ipcMain.handle('mcp:updateServer', (_e: any, id: string, patch: Partial<MCPServerConfig>) => {
+  if (!mcpClient) initMCPClient();
+  mcpClient!.updateServer(id, patch);
+  return true;
+});
+
+ipcMain.handle('mcp:removeServer', (_e: any, id: string) => {
+  if (!mcpClient) initMCPClient();
+  mcpClient!.removeServer(id);
+  return true;
+});
+
+ipcMain.handle('mcp:connect', async (_e: any, serverId: string) => {
+  if (!mcpClient) initMCPClient();
+  return mcpClient!.connect(serverId);
+});
+
+ipcMain.handle('mcp:disconnect', (_e: any, serverId: string) => {
+  if (!mcpClient) initMCPClient();
+  mcpClient!.disconnect(serverId);
+  return true;
+});
+
+ipcMain.handle('mcp:getTools', () => {
+  if (!mcpClient) initMCPClient();
+  return mcpClient!.getAllTools();
+});
+
+ipcMain.handle('mcp:callTool', async (_e: any, serverId: string, toolName: string, args: Record<string, any>) => {
+  if (!mcpClient) initMCPClient();
+  try {
+    const result = await mcpClient!.callTool(serverId, toolName, args);
+    return { ok: true, result };
+  } catch (e: any) {
+    return { ok: false, message: e.message };
+  }
 });
 
 // ====== Settings IPC ======
 ipcMain.handle('settings:getAll', () => loadConfig());
 ipcMain.handle('settings:set', (_e: any, key: string, value: any) => {
   const cfg = loadConfig();
-  (cfg as any)[key] = value;
+  // Support nested keys like 'editor.fontSize'
+  const keys = key.split('.');
+  let target: any = cfg;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!target[keys[i]]) target[keys[i]] = {};
+    target = target[keys[i]];
+  }
+  target[keys[keys.length - 1]] = value;
   saveConfig(cfg);
 });
 ipcMain.handle('settings:setAll', (_e: any, newCfg: any) => {
@@ -150,20 +468,32 @@ ipcMain.handle('settings:setAll', (_e: any, newCfg: any) => {
 ipcMain.handle('dialog:open-file', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'All Files', extensions: ['*'] }],
   });
   if (result.canceled) return null;
-  const filePath = result.filePaths[0];
-  const content = fs.readFileSync(filePath, 'utf-8');
-  return { path: filePath, content };
+  const files: { path: string; content: string }[] = [];
+  for (const fp of result.filePaths) {
+    try {
+      const content = fs.readFileSync(fp, 'utf-8');
+      files.push({ path: fp, content });
+    } catch {}
+  }
+  return files;
 });
 
 ipcMain.handle('dialog:open-folder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
   if (result.canceled) return null;
-  return result.filePaths[0];
+  const folder = result.filePaths[0];
+  // Add to recent folders
+  const cfg = loadConfig();
+  const recent: string[] = cfg.recentFolders || [];
+  const filtered = recent.filter(r => r !== folder);
+  cfg.recentFolders = [folder, ...filtered].slice(0, 10);
+  saveConfig(cfg);
+  return folder;
 });
 
 ipcMain.handle('dialog:save-file', async (_e: any, filePath: string) => {
@@ -171,6 +501,88 @@ ipcMain.handle('dialog:save-file', async (_e: any, filePath: string) => {
   const result = await dialog.showSaveDialog(mainWindow, { defaultPath: filePath });
   if (result.canceled) return null;
   return result.filePath;
+});
+
+// ====== Recent Folders ======
+ipcMain.handle('recent:getFolders', () => {
+  const cfg = loadConfig();
+  return cfg.recentFolders || [];
+});
+
+ipcMain.handle('recent:clearFolders', () => {
+  const cfg = loadConfig();
+  cfg.recentFolders = [];
+  saveConfig(cfg);
+});
+
+// ====== Conversation History ======
+const conversationsDir = path.join(dataDir, 'conversations');
+function ensureConversationsDir() {
+  if (!fs.existsSync(conversationsDir)) {
+    fs.mkdirSync(conversationsDir, { recursive: true });
+  }
+}
+
+ipcMain.handle('conversations:save', (_e: any, projectPath: string, messages: any[]) => {
+  try {
+    ensureConversationsDir();
+    const hash = Buffer.from(projectPath).toString('base64').replace(/[/+=]/g, '_');
+    const filePath = path.join(conversationsDir, `${hash}.json`);
+    const data = {
+      projectPath,
+      updatedAt: new Date().toISOString(),
+      messages: messages.slice(-500), // Keep last 500 messages
+    };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    return true;
+  } catch { return false; }
+});
+
+ipcMain.handle('conversations:load', (_e: any, projectPath: string) => {
+  try {
+    ensureConversationsDir();
+    const hash = Buffer.from(projectPath).toString('base64').replace(/[/+=]/g, '_');
+    const filePath = path.join(conversationsDir, `${hash}.json`);
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      return data.messages || [];
+    }
+    return [];
+  } catch { return []; }
+});
+
+ipcMain.handle('conversations:list', () => {
+  try {
+    ensureConversationsDir();
+    const files = fs.readdirSync(conversationsDir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const fp = path.join(conversationsDir, f);
+        const stat = fs.statSync(fp);
+        return { name: f, mtime: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    return files;
+  } catch { return []; }
+});
+
+ipcMain.handle('conversations:delete', (_e: any, projectPath: string) => {
+  try {
+    ensureConversationsDir();
+    const hash = Buffer.from(projectPath).toString('base64').replace(/[/+=]/g, '_');
+    const filePath = path.join(conversationsDir, `${hash}.json`);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return true;
+  } catch { return false; }
+});
+
+ipcMain.handle('conversations:clear', () => {
+  try {
+    ensureConversationsDir();
+    const files = fs.readdirSync(conversationsDir).filter(f => f.endsWith('.json'));
+    for (const f of files) fs.unlinkSync(path.join(conversationsDir, f));
+    return true;
+  } catch { return false; }
 });
 
 // ====== File System ======
@@ -199,6 +611,52 @@ ipcMain.handle('fs:delete', async (_e: any, targetPath: string) => {
 });
 ipcMain.handle('fs:rename', async (_e: any, oldPath: string, newPath: string) => {
   fs.renameSync(oldPath, newPath);
+  return true;
+});
+
+// ====== File Watcher ======
+let fileWatcher: fs.FSWatcher | null = null;
+let watchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const watchedPaths = new Set<string>();
+
+ipcMain.handle('watcher:start', (_e: any, cwd: string) => {
+  stopFileWatcher();
+  try {
+    fileWatcher = fs.watch(cwd, { recursive: true }, (_eventType: string, filename: string | null) => {
+      if (!filename || !mainWindow || watchedPaths.has(filename)) return;
+      watchedPaths.add(filename);
+      // Debounce: collect changes over 300ms, then emit
+      if (watchDebounceTimer) clearTimeout(watchDebounceTimer);
+      watchDebounceTimer = setTimeout(() => {
+        const allChanged = [...watchedPaths];
+        watchedPaths.clear();
+        mainWindow?.webContents.send('watcher:change', cwd, allChanged);
+      }, 300);
+    });
+    fileWatcher.on('error', (err: Error) => {
+      console.error('File watcher error:', err);
+    });
+    return true;
+  } catch (e: any) {
+    console.error('Failed to start file watcher:', e);
+    return false;
+  }
+});
+
+function stopFileWatcher() {
+  if (fileWatcher) {
+    try { fileWatcher.close(); } catch {}
+    fileWatcher = null;
+  }
+  if (watchDebounceTimer) {
+    clearTimeout(watchDebounceTimer);
+    watchDebounceTimer = null;
+  }
+  watchedPaths.clear();
+}
+
+ipcMain.handle('watcher:stop', () => {
+  stopFileWatcher();
   return true;
 });
 
@@ -285,19 +743,47 @@ ipcMain.on('window:maximize', () => {
 ipcMain.on('window:close', () => mainWindow?.close());
 
 // ====== Terminal ======
-const terminals = new Map<string, { process: ChildProcess; id: string }>();
+const terminals = new Map<string, { process: any; id: string; isPty: boolean }>();
 
 ipcMain.handle('terminal:create', async (event: any, termId: string) => {
+  const ptyFn = getPty();
   const shellCmd = process.env.ComSpec || 'powershell.exe';
+  const cwd = process.env.USERPROFILE || process.env.HOME || '';
+
+  if (ptyFn) {
+    // Use node-pty for full terminal capabilities including resize
+    try {
+      const ptyProcess = ptyFn(shellCmd, [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: process.env as { [key: string]: string },
+      });
+      terminals.set(termId, { process: ptyProcess, id: termId, isPty: true });
+      ptyProcess.onData((data: string) => {
+        event.sender.send('terminal:data', termId, data);
+      });
+      ptyProcess.onExit((code: { exitCode: number }) => {
+        event.sender.send('terminal:exit', termId, code.exitCode);
+        terminals.delete(termId);
+      });
+      return true;
+    } catch (e) {
+      console.error('PTY creation failed, falling back to spawn:', e);
+    }
+  }
+
+  // Fallback to child_process spawn
   const isPowerShell = shellCmd.toLowerCase().includes('powershell');
   const args = isPowerShell ? ['-NoLogo'] : [];
   const child = spawn(shellCmd, args, {
-    cwd: process.env.USERPROFILE || process.env.HOME,
+    cwd,
     env: { ...process.env, TERM: 'xterm-256color' },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  terminals.set(termId, { process: child, id: termId });
+  terminals.set(termId, { process: child, id: termId, isPty: false });
   child.stdout?.on('data', (data: Buffer) => { event.sender.send('terminal:data', termId, data.toString('utf-8')); });
   child.stderr?.on('data', (data: Buffer) => { event.sender.send('terminal:data', termId, data.toString('utf-8')); });
   child.on('exit', (code: number | null) => { event.sender.send('terminal:exit', termId, code); terminals.delete(termId); });
@@ -306,38 +792,70 @@ ipcMain.handle('terminal:create', async (event: any, termId: string) => {
 
 ipcMain.on('terminal:write', (_e: any, termId: string, data: string) => {
   const t = terminals.get(termId);
-  if (t) t.process.stdin?.write(data);
+  if (!t) return;
+  if (t.isPty) {
+    t.process.write(data);
+  } else {
+    t.process.stdin?.write(data);
+  }
 });
 
 ipcMain.on('terminal:resize', (_e: any, termId: string, cols: number, rows: number) => {
   const t = terminals.get(termId);
-  if (t && t.process.stdin) {
-    // For node-pty, we would resize the PTY, but since we're using child_process,
-    // we'll just note that resize is not fully supported
-    // In a real implementation, you'd use node-pty's resize method
+  if (t && t.isPty) {
+    try { t.process.resize(cols, rows); } catch (e) { console.error('Terminal resize error:', e); }
   }
 });
 
 ipcMain.on('terminal:kill', (_e: any, termId: string) => {
   const t = terminals.get(termId);
-  if (t) { t.process.kill(); terminals.delete(termId); }
+  if (!t) return;
+  try { t.process.kill(); } catch (e) { console.error('Terminal kill error:', e); }
+  terminals.delete(termId);
 });
 
 // ====== App lifecycle ======
 app.whenReady().then(() => {
   ensureDataDir();
-  initAgent();
+  initAIEngine();
+  initPluginManager();
   createWindow();
 });
 
 // ====== Debugger ======
 let debugProcess: ChildProcess | null = null;
-let debugClient: any = null;
+
+function getDebugCommand(scriptPath: string, cwd: string): { cmd: string; args: string[]; port?: number } {
+  const ext = path.extname(scriptPath).toLowerCase();
+  const langMap: Record<string, { cmd: string; argsFn: (p: string) => string[]; port?: number }> = {
+    '.js':   { cmd: 'node', argsFn: (p) => ['--inspect-brk=9229', p], port: 9229 },
+    '.mjs':  { cmd: 'node', argsFn: (p) => ['--inspect-brk=9229', p], port: 9229 },
+    '.cjs':  { cmd: 'node', argsFn: (p) => ['--inspect-brk=9229', p], port: 9229 },
+    '.ts':   { cmd: 'npx', argsFn: (p) => ['tsx', '--inspect-brk=9229', p], port: 9229 },
+    '.tsx':  { cmd: 'npx', argsFn: (p) => ['tsx', '--inspect-brk=9229', p], port: 9229 },
+    '.py':   { cmd: 'python', argsFn: (p) => ['-m', 'pdb', p], port: undefined },
+    '.pyw':  { cmd: 'python', argsFn: (p) => ['-m', 'pdb', p], port: undefined },
+    '.go':   { cmd: 'dlv', argsFn: (p) => ['debug', p, '--headless', '--listen=:2345', '--api-version=2'], port: 2345 },
+    '.rs':   { cmd: 'rust-gdb', argsFn: (p) => {
+      const bin = p.replace(/\.rs$/, process.platform === 'win32' ? '.exe' : '');
+      return ['--args', bin];
+    }, port: undefined },
+    '.java': { cmd: 'jdb', argsFn: (p) => {
+      const cls = path.basename(p, '.java');
+      return ['-classpath', path.dirname(p), cls];
+    }, port: undefined },
+    '.cs':   { cmd: 'dotnet', argsFn: () => ['run', '--project', cwd], port: undefined },
+    '.rb':   { cmd: 'ruby', argsFn: (p) => ['-rdebug', p], port: undefined },
+  };
+  const cfg = langMap[ext] || { cmd: 'node', argsFn: (p) => ['--inspect-brk=9229', p], port: 9229 };
+  return { cmd: cfg.cmd, args: cfg.argsFn(scriptPath), port: cfg.port };
+}
 
 ipcMain.handle('debug:start', async (event: any, scriptPath: string, cwd: string) => {
   try {
     if (debugProcess) { debugProcess.kill(); debugProcess = null; }
-    debugProcess = spawn('node', ['--inspect-brk=9229', scriptPath], {
+    const { cmd, args, port } = getDebugCommand(scriptPath, cwd);
+    debugProcess = spawn(cmd, args, {
       cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     debugProcess.stdout?.on('data', (data: Buffer) => {
@@ -350,7 +868,9 @@ ipcMain.handle('debug:start', async (event: any, scriptPath: string, cwd: string
       event.sender.send('debug:exit', code);
       debugProcess = null;
     });
-    return { ok: true, message: `Debugger started on port 9229` };
+    const portMsg = port ? ` on port ${port}` : '';
+    const ext = path.extname(scriptPath).toUpperCase();
+    return { ok: true, message: `Debugger started for ${ext} file${portMsg}` };
   } catch (e: any) {
     return { ok: false, message: e.message };
   }
@@ -366,9 +886,10 @@ ipcMain.handle('debug:stop', async () => {
 });
 
 app.on('window-all-closed', () => {
-  // Kill all terminal processes before quitting
+  stopFileWatcher();
   terminals.forEach((t) => { try { t.process.kill(); } catch {} });
   terminals.clear();
+  if (debugProcess) { try { debugProcess.kill(); } catch {} }
   if (process.platform !== 'darwin') app.quit();
 });
 
