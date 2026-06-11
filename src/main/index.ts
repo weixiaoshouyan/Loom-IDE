@@ -98,7 +98,7 @@ function createWindow() {
     x: ws.x, y: ws.y,
     minWidth: 900, minHeight: 600,
     title: 'Loom IDE',
-    icon: path.join(__dirname, '../../resources/icon.png'),
+    icon: path.join(__dirname, '../../resources/icon.ico'),
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -106,6 +106,8 @@ function createWindow() {
       symbolColor: theme === 'dark' ? '#cccccc' : '#333333',
       height: 30,
     },
+    show: false,
+    backgroundColor: theme === 'dark' ? '#1e1e1e' : '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -121,6 +123,19 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow!.show();
+    mainWindow!.focus();
+  });
+
+  // Fallback: show window after 3s even if ready-to-show didn't fire
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  }, 3000);
 
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));

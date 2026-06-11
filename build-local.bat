@@ -29,7 +29,7 @@ if %ERRORLEVEL% NEQ 0 (
 :: Compile TypeScript main process
 echo.
 echo [2/4] 编译主进程 TypeScript...
-call npx tsc -p tsconfig.main.json
+node _compile-fix.js
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] TypeScript 编译失败！
     pause

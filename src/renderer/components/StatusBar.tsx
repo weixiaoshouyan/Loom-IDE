@@ -5,12 +5,23 @@ interface Props {
   workspacePath: string;
   activeFile: OpenFile | null;
   agentStatus?: 'online' | 'offline';
+  aiMode?: 'orca' | 'builtin';
+  orcaOnline?: boolean;
 }
 
-export default function StatusBar({ workspacePath, activeFile, agentStatus = 'offline' }: Props) {
+export default function StatusBar({ workspacePath, activeFile, agentStatus = 'offline', aiMode = 'orca', orcaOnline = false }: Props) {
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
+  const [tabSize, setTabSize] = useState(2);
 
   useEffect(() => { setCursor({ line: 1, col: 1 }); }, [activeFile?.path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (window as any).loom?.settings?.getAll?.().then((s: any) => {
+      if (!cancelled && s?.editor?.tabSize) setTabSize(s.editor.tabSize);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const handler = (e: CustomEvent) => setCursor({ line: e.detail.line, col: e.detail.column });
@@ -23,7 +34,7 @@ export default function StatusBar({ workspacePath, activeFile, agentStatus = 'of
       <div className="statusbar-left">
         <div className="statusbar-item" style={{ background: agentStatus === 'online' ? 'rgba(106,153,85,0.8)' : 'rgba(150,150,150,0.5)' }}>
           <svg viewBox="0 0 16 16" width="12" height="12"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
-          Orca {agentStatus === 'online' ? 'Online' : 'Offline'}
+          {aiMode === 'orca' ? `Orca ${orcaOnline ? 'Online' : 'Offline'}` : `AI ${agentStatus === 'online' ? 'Online' : 'Offline'}`}
         </div>
         {workspacePath && (
           <div className="statusbar-item">
@@ -34,8 +45,8 @@ export default function StatusBar({ workspacePath, activeFile, agentStatus = 'of
       </div>
       <div className="statusbar-right">
         {activeFile && <div className="statusbar-item">Ln {cursor.line}, Col {cursor.col}</div>}
-        {activeFile && <div className="statusbar-item">Spaces: 2</div>}
-        {activeFile && <div className="statusbar-item">{activeFile.language.charAt(0).toUpperCase() + activeFile.language.slice(1)}</div>}
+        {activeFile && <div className="statusbar-item">Spaces: {tabSize}</div>}
+        {activeFile && <div className="statusbar-item">{activeFile.language?.charAt(0)?.toUpperCase?.() ?? ''}{activeFile.language?.slice(1) ?? 'Plain'}</div>}
         <div className="statusbar-item">UTF-8</div>
         <div className="statusbar-item">LF</div>
       </div>

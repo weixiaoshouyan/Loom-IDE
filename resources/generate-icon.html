@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Loom IDE Icon Generator</title>
+<style>
+  body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #1e1e1e; color: #ccc; }
+  canvas { border: 2px solid #333; border-radius: 8px; margin: 10px; }
+  button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #007acc; color: white; border: none; border-radius: 4px; font-size: 14px; }
+  button:hover { background: #1c97ea; }
+  .sizes { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+</style>
+</head>
+<body>
+<h2>Loom IDE Icon Generator</h2>
+<p>Click to download icon PNGs</p>
+<div class="sizes" id="buttons"></div>
+<script>
+function drawIcon(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const s = size;
+  const cx = s / 2, cy = s / 2;
+
+  // Rounded rectangle background with gradient
+  const bgGrad = ctx.createLinearGradient(0, 0, s, s);
+  bgGrad.addColorStop(0, '#0d1b2a');
+  bgGrad.addColorStop(0.5, '#1b2838');
+  bgGrad.addColorStop(1, '#0a192f');
+  ctx.beginPath();
+  ctx.roundRect(0, 0, s, s, s * 0.18);
+  ctx.fillStyle = bgGrad;
+  ctx.fill();
+
+  // Subtle inner glow
+  const glow = ctx.createRadialGradient(cx, cy * 0.85, s * 0.05, cx, cy, s * 0.55);
+  glow.addColorStop(0, 'rgba(0,122,204,0.12)');
+  glow.addColorStop(0.5, 'rgba(78,201,176,0.06)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fill();
+
+  // Outer ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, s * 0.42, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0,122,204,0.25)';
+  ctx.lineWidth = s * 0.008;
+  ctx.stroke();
+
+  // Second ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(78,201,176,0.15)';
+  ctx.lineWidth = s * 0.005;
+  ctx.stroke();
+
+  // Web grid - horizontal lines
+  ctx.lineWidth = s * 0.003;
+  const hStep = s * 0.1;
+  for (let i = 1; i < 6; i++) {
+    const y = s * 0.2 + i * hStep;
+    const alpha = i === 3 ? 0.2 : 0.08;
+    ctx.strokeStyle = `rgba(0,122,204,${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.18, y);
+    ctx.lineTo(s * 0.82, y);
+    ctx.stroke();
+  }
+
+  // Web grid - vertical lines
+  for (let i = 1; i < 6; i++) {
+    const x = s * 0.2 + i * hStep;
+    const alpha = i === 3 ? 0.2 : 0.08;
+    ctx.strokeStyle = `rgba(78,201,176,${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(x, s * 0.18);
+    ctx.lineTo(x, s * 0.82);
+    ctx.stroke();
+  }
+
+  // Diagonal threads
+  ctx.lineWidth = s * 0.002;
+  for (let i = 0; i < 5; i++) {
+    const off = i * s * 0.08;
+    ctx.strokeStyle = `rgba(78,201,176,${0.06 + i * 0.01})`;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.2 + off, s * 0.2);
+    ctx.lineTo(s * 0.2 + off + s * 0.6, s * 0.2 + s * 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(s * 0.8 - off, s * 0.2);
+    ctx.lineTo(s * 0.8 - off - s * 0.6, s * 0.2 + s * 0.6);
+    ctx.stroke();
+  }
+
+  // Main L letter - bold, modern, with gradient
+  const gradL = ctx.createLinearGradient(s * 0.25, s * 0.15, s * 0.65, s * 0.85);
+  gradL.addColorStop(0, '#4fc1ff');
+  gradL.addColorStop(0.3, '#007acc');
+  gradL.addColorStop(0.7, '#007acc');
+  gradL.addColorStop(1, '#4ec9b0');
+  ctx.strokeStyle = gradL;
+  ctx.lineWidth = s * 0.055;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // L shape with slight curve for modern feel
+  ctx.beginPath();
+  ctx.moveTo(s * 0.28, s * 0.18);
+  ctx.lineTo(s * 0.28, s * 0.78);
+  ctx.quadraticCurveTo(s * 0.28, s * 0.82, s * 0.32, s * 0.82);
+  ctx.lineTo(s * 0.68, s * 0.82);
+  ctx.stroke();
+
+  // Inner L accent line
+  ctx.strokeStyle = 'rgba(78,201,176,0.35)';
+  ctx.lineWidth = s * 0.012;
+  ctx.beginPath();
+  ctx.moveTo(s * 0.38, s * 0.27);
+  ctx.lineTo(s * 0.38, s * 0.72);
+  ctx.quadraticCurveTo(s * 0.38, s * 0.74, s * 0.40, s * 0.74);
+  ctx.lineTo(s * 0.60, s * 0.74);
+  ctx.stroke();
+
+  // AI sparkle dots - constellation pattern
+  const dots = [
+    [cx, cy, s * 0.02, '#4ec9b0', 0.9],
+    [s * 0.28, cy, s * 0.01, '#007acc', 0.5],
+    [s * 0.72, cy, s * 0.01, '#007acc', 0.5],
+    [cx, s * 0.28, s * 0.01, '#4ec9b0', 0.4],
+    [cx, s * 0.72, s * 0.01, '#4ec9b0', 0.4],
+    [s * 0.68, s * 0.32, s * 0.008, '#4fc1ff', 0.6],
+    [s * 0.35, s * 0.65, s * 0.006, '#4fc1ff', 0.3],
+    [s * 0.72, s * 0.55, s * 0.005, '#4ec9b0', 0.3],
+    [s * 0.55, s * 0.35, s * 0.005, '#007acc', 0.25],
+  ];
+  dots.forEach(([dx, dy, dr, color, alpha]) => {
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dr, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Connecting lines between dots (neural network feel)
+  ctx.strokeStyle = 'rgba(0,122,204,0.1)';
+  ctx.lineWidth = s * 0.002;
+  ctx.beginPath();
+  ctx.moveTo(s * 0.28, cy);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(s * 0.72, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, s * 0.28);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(cx, s * 0.72);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.68, s * 0.32);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(s * 0.35, s * 0.65);
+  ctx.stroke();
+
+  // Top-right corner glow (AI indicator)
+  const starGlow = ctx.createRadialGradient(s * 0.68, s * 0.32, 0, s * 0.68, s * 0.32, s * 0.06);
+  starGlow.addColorStop(0, 'rgba(79,193,255,0.2)');
+  starGlow.addColorStop(1, 'rgba(79,193,255,0)');
+  ctx.fillStyle = starGlow;
+  ctx.beginPath();
+  ctx.arc(s * 0.68, s * 0.32, s * 0.06, 0, Math.PI * 2);
+  ctx.fill();
+
+  return canvas;
+}
+
+const sizes = [
+  { label: '256x256', size: 256 },
+  { label: '512x512', size: 512 },
+  { label: '1024x1024', size: 1024 },
+  { label: '48x48', size: 48 },
+  { label: '32x32', size: 32 },
+  { label: '16x16', size: 16 },
+];
+
+const buttonsDiv = document.getElementById('buttons');
+sizes.forEach(({ label, size }) => {
+  const canvas = drawIcon(size);
+  const btn = document.createElement('button');
+  btn.textContent = `Download ${label}`;
+  btn.onclick = () => {
+    const link = document.createElement('a');
+    link.download = `icon-${size}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+  buttonsDiv.appendChild(btn);
+  document.body.appendChild(canvas);
+});
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { getFileIcon } from './FileIcons';
 
 interface FileEntry {
   name: string;
@@ -12,32 +13,11 @@ interface TreeItemProps {
   onOpenFile: (path: string, content: string) => void;
   selectedFile: string;
   onRefresh: () => void;
+  gitStatusMap?: Record<string, string>;
+  workspacePath?: string;
 }
 
 const HIDDEN = new Set(['node_modules', '.git', '.vscode', 'dist', 'release', '__pycache__', '.next', 'coverage']);
-const extColors: Record<string, string> = {
-  ts: '#3178c6', tsx: '#3178c6', js: '#f7df1e', jsx: '#61dafb',
-  py: '#3572A5', json: '#f7df1e', md: '#083fa1', css: '#563d7c',
-  html: '#e34c26', go: '#00ADD8', rs: '#dea584', yml: '#cb171e',
-  yaml: '#cb171e', sh: '#89e051', java: '#b07219', rb: '#cc342d',
-  php: '#4F5D95', c: '#555555', cpp: '#f34b7d', xml: '#0060ac',
-  svg: '#ffb13b', png: '#a855f7', jpg: '#a855f7', gif: '#a855f7',
-};
-
-function getFileIcon(name: string, isDir: boolean): { color: string; svg: JSX.Element } {
-  if (isDir) {
-    return {
-      color: '#dcb67a',
-      svg: <svg viewBox="0 0 16 16" fill="#dcb67a"><path d="M1.5 3A1.5 1.5 0 013 1.5h3.146a.5.5 0 01.354.146L7.707 2.854a.5.5 0 00.354.146H13A1.5 1.5 0 0114.5 4.5v8A1.5 1.5 0 0113 14H3A1.5 1.5 0 011.5 12.5V3z"/></svg>,
-    };
-  }
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  const color = extColors[ext] || '#cccccc';
-  return {
-    color,
-    svg: <svg viewBox="0 0 16 16"><path d="M4 1.5H3a2 2 0 00-2 2v9a2 2 0 002 2h10a2 2 0 002-2V4.5" fill="none" stroke={color} strokeWidth="1"/><path d="M9 1.5v4a.5.5 0 00.5.5h4" fill="none" stroke={color} strokeWidth="1"/><path d="M12 1.5L14.5 4" fill="none" stroke={color} strokeWidth="1"/></svg>,
-  };
-}
 
 // Context menu component
 function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: { label: string; action: () => void; separator?: boolean; disabled?: boolean }[]; onClose: () => void }) {
@@ -63,7 +43,7 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: { 
   );
 }
 
-function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh }: TreeItemProps) {
+function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh, gitStatusMap, workspacePath }: TreeItemProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -71,6 +51,8 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh }: TreeIte
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(entry.name);
   const [deleting, setDeleting] = useState(false);
+  const [creatingInDir, setCreatingInDir] = useState<'file' | 'folder' | null>(null);
+  const [newItemName, setNewItemName] = useState('');
 
   const handleClick = useCallback(async () => {
     if (entry.isDirectory) {
@@ -102,8 +84,9 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh }: TreeIte
   const handleRename = async () => {
     if (!newName.trim() || newName === entry.name) { setRenaming(false); return; }
     try {
-      const dir = entry.path.substring(0, entry.path.lastIndexOf(/[\\/]/.test(entry.path) ? '\\' : '/'));
-      const newPath = dir + (entry.path.includes('\\') ? '\\' : '/') + newName.trim();
+      const sep = entry.path.includes('\\') ? '\\' : '/';
+      const dir = entry.path.substring(0, entry.path.lastIndexOf(sep));
+      const newPath = dir + sep + newName.trim();
       await (window as any).loom.fs.rename(entry.path, newPath);
       onRefresh();
     } catch (e: any) {
@@ -113,29 +96,80 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh }: TreeIte
   };
 
   const handleDelete = async () => {
+    if (!window.confirm(`Delete "${entry.name}"? ${entry.isDirectory ? 'This will remove the entire folder and its contents.' : 'This action cannot be undone.'}`)) return;
     setDeleting(true);
     try {
       await (window as any).loom.fs.deletePath(entry.path);
       onRefresh();
     } catch (e: any) {
-      console.error('Delete failed:', e.message);
+      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `Delete failed: ${e.message}`, type: 'error' } }));
     }
     setDeleting(false);
   };
 
-  if (HIDDEN.has(entry.name)) return null;
-  const icon = getFileIcon(entry.name, entry.isDirectory);
-  const isSelected = selectedFile === entry.path;
+  const handleCreateInDir = async () => {
+    if (!newItemName.trim() || !entry.isDirectory) return;
+    const sep = entry.path.includes('\\') ? '\\' : '/';
+    const fullPath = entry.path + sep + newItemName.trim();
+    try {
+      if (creatingInDir === 'file') {
+        await (window as any).loom.fs.writeFile(fullPath, '');
+      } else if (creatingInDir === 'folder') {
+        await (window as any).loom.fs.mkdir(fullPath);
+      }
+      onRefresh();
+      // Auto-expand directory
+      if (!expanded) {
+        setExpanded(true);
+        if (!loaded) {
+          const entries: FileEntry[] = await (window as any).loom.fs.readDir(entry.path);
+          setChildren(entries.sort((a, b) => {
+            if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          }).filter(e => !HIDDEN.has(e.name)));
+          setLoaded(true);
+        }
+      }
+    } catch (e: any) {
+      console.error('Failed to create:', e.message);
+    }
+    setCreatingInDir(null);
+    setNewItemName('');
+  };
 
-  const ctxItems = [
-    { label: entry.isDirectory ? 'New File...' : 'Open', action: handleClick },
-    { label: entry.isDirectory ? 'New Folder...' : 'Rename', action: () => setRenaming(true) },
-    { separator: true, label: '' },
-    { label: 'Copy Path', action: () => navigator.clipboard?.writeText(entry.path) },
-    { label: 'Copy Relative Path', action: () => navigator.clipboard?.writeText(entry.name) },
-    { separator: true, label: '' },
-    { label: 'Delete', action: handleDelete },
-  ];
+  if (HIDDEN.has(entry.name)) return null;
+  const icon = getFileIcon(entry.name, entry.isDirectory, expanded);
+  const isSelected = selectedFile === entry.path;
+  
+  // Git status
+  const relativePath = workspacePath ? entry.path.replace(workspacePath, '').replace(/^[\\/]/, '').replace(/\\/g, '/') : entry.name;
+  const gitStatus = !entry.isDirectory && gitStatusMap ? gitStatusMap[relativePath] : undefined;
+  const gitColor = gitStatus === 'M' ? 'var(--git-modified)' :
+    gitStatus === 'A' || gitStatus === '?' ? 'var(--git-added)' :
+    gitStatus === 'D' ? 'var(--git-deleted)' :
+    gitStatus === 'R' ? 'var(--git-added)' : undefined;
+  const gitLabel = gitStatus === 'M' ? 'M' : gitStatus === 'A' ? 'A' : gitStatus === 'D' ? 'D' :
+    gitStatus === '?' ? 'U' : gitStatus === 'R' ? 'R' : undefined;
+
+  const ctxItems = entry.isDirectory
+    ? [
+        { label: 'New File...', action: () => { setCreatingInDir('file'); setNewItemName(''); } },
+        { label: 'New Folder...', action: () => { setCreatingInDir('folder'); setNewItemName(''); } },
+        { separator: true, label: '' },
+        { label: 'Copy Path', action: () => navigator.clipboard?.writeText(entry.path) },
+        { label: 'Rename', action: () => setRenaming(true) },
+        { separator: true, label: '' },
+        { label: 'Delete', action: handleDelete },
+      ]
+    : [
+        { label: 'Open', action: handleClick },
+        { label: 'Rename', action: () => setRenaming(true) },
+        { separator: true, label: '' },
+        { label: 'Copy Path', action: () => navigator.clipboard?.writeText(entry.path) },
+        { label: 'Copy Relative Path', action: () => navigator.clipboard?.writeText(entry.name) },
+        { separator: true, label: '' },
+        { label: 'Delete', action: handleDelete },
+      ];
 
   if (deleting) {
     return (
@@ -175,11 +209,24 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, onRefresh }: TreeIte
             style={{ flex: 1, height: 18, fontSize: 12, padding: '0 4px', background: 'var(--bg-input)', border: '1px solid var(--border-focus)', color: 'var(--text-primary)' }}
           />
         ) : (
-          <span className="tree-item-name">{entry.name}</span>
+          <span className="tree-item-name" style={gitColor ? { color: gitColor } : undefined}>
+            {entry.name}
+            {gitLabel && <span className="git-status-badge" style={{ color: gitColor }}>{gitLabel}</span>}
+          </span>
         )}
       </div>
+      {creatingInDir && ctxMenu === null && (
+        <div style={{ paddingLeft: (depth + 1) * 16 + 'px', padding: '4px 8px 4px ' + ((depth + 1) * 16) + 'px', display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input className="search-input" style={{ flex: 1, height: 20, fontSize: 12 }}
+            placeholder={creatingInDir === 'file' ? 'filename.ext' : 'folder name'}
+            value={newItemName} onChange={e => setNewItemName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreateInDir(); if (e.key === 'Escape') { setCreatingInDir(null); setNewItemName(''); } }}
+            autoFocus />
+          <button className="settings-btn-sm" onClick={handleCreateInDir} disabled={!newItemName.trim()} style={{ fontSize: 10, padding: '2px 6px' }}>OK</button>
+        </div>
+      )}
       {expanded && entry.isDirectory && children.map(child => (
-        <TreeItem key={child.path} entry={child} depth={depth + 1} onOpenFile={onOpenFile} selectedFile={selectedFile} onRefresh={onRefresh} />
+        <TreeItem key={child.path} entry={child} depth={depth + 1} onOpenFile={onOpenFile} selectedFile={selectedFile} onRefresh={onRefresh} gitStatusMap={gitStatusMap} workspacePath={workspacePath} />
       ))}
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={() => setCtxMenu(null)} />}
     </>
@@ -230,7 +277,13 @@ export function OutlineView({ filePath, onOpenFile }: { filePath: string; onOpen
   };
 
   if (symbols.length === 0) {
-    return <div className="tree-empty" style={{ padding: '16px', textAlign: 'center' }}>No symbols found in document</div>;
+    return (
+      <div className="panel-empty-state">
+        <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><path d="M14 2H2v12h12V2zM3 3v10h10V3H3zm2 2h6v1H5V5zm0 3h6v1H5V8zm0 3h4v1H5v-1z" fill="currentColor"/></svg>
+        <div>{filePath ? 'No symbols found' : 'No file opened'}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{filePath ? 'Open a code file to see symbols' : 'Open a file to view its outline'}</div>
+      </div>
+    );
   }
 
   return (
@@ -256,9 +309,10 @@ interface Props {
   workspacePath: string;
   onOpenFile: (path: string, content: string) => void;
   selectedFile: string;
+  gitStatusMap?: Record<string, string>;
 }
 
-export default function FileTree({ workspacePath, onOpenFile, selectedFile }: Props) {
+export default function FileTree({ workspacePath, onOpenFile, selectedFile, gitStatusMap }: Props) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -282,13 +336,30 @@ export default function FileTree({ workspacePath, onOpenFile, selectedFile }: Pr
     return () => window.removeEventListener('loom:refresh-tree', handler);
   }, []);
 
+  // Listen for collapse-all
+  useEffect(() => {
+    const handler = () => {
+      // Force re-mount all tree items by resetting entries
+      setRefreshKey(k => k + 1);
+    };
+    window.addEventListener('loom:collapse-all', handler);
+    return () => window.removeEventListener('loom:collapse-all', handler);
+  }, []);
+
   const handleRefresh = () => setRefreshKey(k => k + 1);
 
-  if (!workspacePath) return <div className="tree-empty">No folder opened</div>;
+  if (!workspacePath) return (
+    <div className="panel-empty-state">
+      <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><path d="M1.5 3A1.5 1.5 0 013 1.5h3.146a.5.5 0 01.354.146L7.707 2.854a.5.5 0 00.354.146H13A1.5 1.5 0 0114.5 4.5v8A1.5 1.5 0 0113 14H3A1.5 1.5 0 011.5 12.5V3z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+      <div>No folder opened</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Open a folder to explore files</div>
+    </div>
+  );
   if (entries.length === 0) return (
-    <div className="tree-empty" style={{ textAlign: 'center', padding: '16px' }}>
-      <p style={{ marginBottom: 8 }}>Empty folder</p>
-      <button className="welcome-action-btn" style={{ fontSize: 11, padding: '4px 10px' }}
+    <div className="panel-empty-state">
+      <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)', marginBottom: 8 }}><path d="M1.5 3A1.5 1.5 0 013 1.5h3.146a.5.5 0 01.354.146L7.707 2.854a.5.5 0 00.354.146H13A1.5 1.5 0 0114.5 4.5v8A1.5 1.5 0 0113 14H3A1.5 1.5 0 011.5 12.5V3z" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M5 7h6M8 5v4" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+      <div>Empty folder</div>
+      <button className="welcome-action-btn" style={{ fontSize: 11, padding: '4px 10px', marginTop: 8 }}
         onClick={() => {
           window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
         }}>
@@ -300,7 +371,7 @@ export default function FileTree({ workspacePath, onOpenFile, selectedFile }: Pr
   return (
     <div className="file-tree">
       {entries.map(entry => (
-        <TreeItem key={entry.path} entry={entry} depth={0} onOpenFile={onOpenFile} selectedFile={selectedFile} onRefresh={handleRefresh} />
+        <TreeItem key={entry.path} entry={entry} depth={0} onOpenFile={onOpenFile} selectedFile={selectedFile} onRefresh={handleRefresh} gitStatusMap={gitStatusMap} workspacePath={workspacePath} />
       ))}
     </div>
   );

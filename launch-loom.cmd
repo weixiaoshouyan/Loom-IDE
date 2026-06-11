@@ -1,3 +1,3 @@
 @echo off
-cd /d "E:\??\SDA??\loom"
-start "" "node_modules\.bin\electron.cmd" .
+cd /d "E:\工作\SDA配置\loom"
+start "" npx electron .

@@ -3,6 +3,41 @@ import { Terminal as XTerminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
+// Terminal theme configurations
+const darkTheme = {
+  background: '#1e1e1e',
+  foreground: '#cccccc',
+  cursor: '#aeafad',
+  selectionBackground: '#264f78',
+  black: '#1e1e1e',
+  red: '#f44747',
+  green: '#6a9955',
+  yellow: '#cca700',
+  blue: '#569cd6',
+  magenta: '#c586c0',
+  cyan: '#4ec9b0',
+  white: '#d4d4d4',
+};
+
+const lightTheme = {
+  background: '#ffffff',
+  foreground: '#333333',
+  cursor: '#333333',
+  selectionBackground: '#c4dcf0',
+  black: '#333333',
+  red: '#cd3131',
+  green: '#168233',
+  yellow: '#bf8803',
+  blue: '#0451a5',
+  magenta: '#a133b3',
+  cyan: '#098658',
+  white: '#333333',
+};
+
+function getTerminalTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? lightTheme : darkTheme;
+}
+
 interface Props { visible: boolean; termId?: string; }
 
 export default function Terminal({ visible, termId = 'term-1' }: Props) {
@@ -17,14 +52,30 @@ export default function Terminal({ visible, termId = 'term-1' }: Props) {
   }, [termId]);
 
   useEffect(() => {
-    if (!ref.current || !visible) return;
+    if (!ref.current) return;
+
+    // Only create terminal if not already created for this termId
+    if (createdRef.current && termRef.current) {
+      // Terminal already exists, just show/hide and refit
+      if (visible) {
+        setTimeout(() => { try { fitRef.current?.fit(); } catch {} }, 50);
+      }
+      return;
+    }
+    if (!visible) return;
 
     const term = new XTerminal({
       fontSize: 13,
       fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
-      theme: { background: '#1e1e1e', foreground: '#cccccc', cursor: '#aeafad', selectionBackground: '#264f78', black: '#1e1e1e', red: '#f44747', green: '#6a9955', yellow: '#cca700', blue: '#569cd6', magenta: '#c586c0', cyan: '#4ec9b0', white: '#d4d4d4' },
+      theme: getTerminalTheme(),
       cursorBlink: true, scrollback: 5000, allowProposedApi: true,
     });
+    
+    // Listen for theme changes
+    const themeObserver = new MutationObserver(() => {
+      term.options.theme = getTerminalTheme();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     termRef.current = term;
 
     const fitAddon = new FitAddon();
@@ -58,14 +109,13 @@ export default function Terminal({ visible, termId = 'term-1' }: Props) {
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      onDataDispose?.dispose?.();
+      themeObserver.disconnect();
       removeOnData?.();
-      removeOnExit?.();
-      // Kill the PTY process associated with this terminal
-      try { (window as any).loom.terminal.kill(currentTermId.current); } catch {}
-      try { term.dispose(); } catch {}
-      termRef.current = null;
-      createdRef.current = false;
+      onDataDispose.dispose();
+      // Clean up when termId changes or component visibility toggles
+      if (termRef.current) {
+        try { (window as any).loom.terminal.kill(id); } catch {}
+      }
     };
   }, [visible, termId]);
 
@@ -74,6 +124,19 @@ export default function Terminal({ visible, termId = 'term-1' }: Props) {
       setTimeout(() => { try { fitRef.current?.fit(); } catch {} }, 50);
     }
   }, [visible]);
+
+  // Cleanup on actual unmount
+  useEffect(() => {
+    return () => {
+      const tid = currentTermId.current;
+      if (termRef.current) {
+        try { (window as any).loom.terminal.kill(tid); } catch {}
+        try { termRef.current.dispose(); } catch {}
+        termRef.current = null;
+        createdRef.current = false;
+      }
+    };
+  }, []);
 
   return <div ref={ref} className="terminal-container" style={{ display: visible ? 'block' : 'none', width: '100%', height: '100%' }} />;
 }
