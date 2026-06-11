@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
 import { spawn, ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import { AIEngine, AIConfig, ChatMessage, AIProvider, AgentProfile } from '../agent/ai-engine';
@@ -87,6 +88,33 @@ function initMCPClient() {
   setTimeout(() => mcpClient?.reconnectAll(), 1000);
 }
 
+// ====== Static File Server ======
+let staticServer: http.Server | null = null;
+const STATIC_PORT = 5174;
+
+function startStaticServer(): Promise<void> {
+  return new Promise((resolve) => {
+    const ROOT = path.join(__dirname, '../renderer');
+    const MIME: Record<string, string> = {
+      '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+      '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+      '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.woff': 'font/woff',
+      '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+    };
+    staticServer = http.createServer((req, res) => {
+      let filePath = path.join(ROOT, req.url === '/' ? 'index.html' : (req.url || '/').split('?')[0]);
+      if (!fs.existsSync(filePath)) filePath = path.join(ROOT, 'index.html');
+      const ext = path.extname(filePath);
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+      fs.createReadStream(filePath).pipe(res);
+    });
+    staticServer.listen(STATIC_PORT, () => {
+      console.log(`[Loom Static Server] http://localhost:${STATIC_PORT}`);
+      resolve();
+    });
+  });
+}
+
 // ====== Window ======
 function createWindow() {
   const cfg = loadConfig();
@@ -121,21 +149,24 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5174');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    mainWindow.loadURL('http://localhost:5174');
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow!.show();
     mainWindow!.focus();
+    mainWindow!.webContents.openDevTools();
   });
 
-  // Fallback: show window after 3s even if ready-to-show didn't fire
+  // Also show after a short delay as fallback
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isVisible()) {
-      mainWindow.show();
+    if (mainWindow) {
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
       mainWindow.focus();
     }
-  }, 3000);
+  }, 2000);
 
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
@@ -830,11 +861,31 @@ ipcMain.on('terminal:kill', (_e: any, termId: string) => {
 });
 
 // ====== App lifecycle ======
-app.whenReady().then(() => {
+let tray: Tray | null = null;
+
+app.whenReady().then(async () => {
   ensureDataDir();
   initAIEngine();
   initPluginManager();
+  await startStaticServer();
   createWindow();
+
+  // System Tray
+  const iconPath = path.join(__dirname, '../../resources/icon.ico');
+  const trayIcon = nativeImage.createFromPath(iconPath);
+  tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Loom IDE');
+  const contextMenu = Menu.buildFromTemplate([
+    { label: '显示 Loom IDE', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: '退出', click: () => { app.quit(); } },
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) mainWindow.focus();
+      else { mainWindow.show(); mainWindow.focus(); }
+    }
+  });
 });
 
 // ====== Debugger ======
@@ -905,6 +956,8 @@ app.on('window-all-closed', () => {
   terminals.forEach((t) => { try { t.process.kill(); } catch {} });
   terminals.clear();
   if (debugProcess) { try { debugProcess.kill(); } catch {} }
+  if (staticServer) { try { staticServer.close(); } catch {} }
+  if (tray) { try { tray.destroy(); } catch {} }
   if (process.platform !== 'darwin') app.quit();
 });
 
