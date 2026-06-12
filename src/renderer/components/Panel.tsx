@@ -150,7 +150,10 @@ export default function Panel({ visible, height, onClose, onResize, problems, ou
                         onClick={(e) => {
                           e.stopPropagation();
                           if (termCount <= 1) return;
+                          // Kill the terminal process
+                          (window as any).loom?.terminal?.kill?.(`term-${i}`);
                           if (activeTerm === i) setActiveTerm(Math.max(0, i - 1));
+                          else if (activeTerm > i) setActiveTerm(t => Math.max(0, t - 1));
                           setTermCount(c => Math.max(1, c - 1));
                         }}>
                         <svg viewBox="0 0 16 16" width="10" height="10"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5"/></svg>

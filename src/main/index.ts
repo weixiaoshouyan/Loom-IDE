@@ -93,7 +93,7 @@ let staticServer: http.Server | null = null;
 const STATIC_PORT = 5174;
 
 function startStaticServer(): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const ROOT = path.join(__dirname, '../renderer');
     const MIME: Record<string, string> = {
       '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
@@ -102,11 +102,24 @@ function startStaticServer(): Promise<void> {
       '.woff2': 'font/woff2', '.ico': 'image/x-icon',
     };
     staticServer = http.createServer((req, res) => {
-      let filePath = path.join(ROOT, req.url === '/' ? 'index.html' : (req.url || '/').split('?')[0]);
-      if (!fs.existsSync(filePath)) filePath = path.join(ROOT, 'index.html');
-      const ext = path.extname(filePath);
-      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-      fs.createReadStream(filePath).pipe(res);
+      try {
+        let filePath = path.join(ROOT, req.url === '/' ? 'index.html' : (req.url || '/').split('?')[0]);
+        if (!fs.existsSync(filePath)) filePath = path.join(ROOT, 'index.html');
+        const ext = path.extname(filePath);
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+        fs.createReadStream(filePath).pipe(res);
+      } catch (e) {
+        res.writeHead(500);
+        res.end('Internal Server Error');
+      }
+    });
+    staticServer.on('error', (e: any) => {
+      if (e.code === 'EADDRINUSE') {
+        console.warn(`Port ${STATIC_PORT} in use, trying ${STATIC_PORT + 1}`);
+        staticServer!.listen(STATIC_PORT + 1, () => resolve());
+      } else {
+        reject(e);
+      }
     });
     staticServer.listen(STATIC_PORT, () => {
       console.log(`[Loom Static Server] http://localhost:${STATIC_PORT}`);
@@ -155,16 +168,16 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow!.show();
     mainWindow!.focus();
-    mainWindow!.webContents.openDevTools();
   });
 
-  // Also show after a short delay as fallback
+  // Show window after 2s fallback, open DevTools only in development
   setTimeout(() => {
     if (mainWindow) {
-      if (!mainWindow.isVisible()) {
-        mainWindow.show();
-      }
+      if (!mainWindow.isVisible()) mainWindow.show();
       mainWindow.focus();
+      if (process.env.NODE_ENV === 'development') {
+        mainWindow.webContents.openDevTools();
+      }
     }
   }, 2000);
 

@@ -74,7 +74,7 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
     }
     const model = editor.getModel();
     if (!model) return;
-    const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord ? 'true' : null, false);
+    const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord, false);
     setMatchCount(matches.length);
     setCurrentMatch(matches.length > 0 ? 1 : 0);
     const newDecorations = matches.map((m: any) => ({
@@ -105,7 +105,7 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
     const text = model.getValueInRange(selection);
     if (text.length === 0) {
       const fromPos = pos;
-      const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord ? 'true' : null, false);
+    const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord, false);
       const nextMatch = matches.find(m => m.range.getStartPosition().isAfterOrEqual(fromPos));
       if (nextMatch) {
         model.pushEditOperations([], [{ range: nextMatch.range, text: replaceText }], () => null);
@@ -121,7 +121,7 @@ function FindReplaceBar({ editor }: { editor: monaco.editor.IStandaloneCodeEdito
     if (!editor || !findText) return;
     const model = editor.getModel();
     if (!model) return;
-    const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord ? 'true' : null, false);
+    const matches = model.findMatches(findText, false, useRegex, matchCase, wholeWord, false);
     if (matches.length === 0) return;
     const edits = matches.slice().reverse().map(m => ({ range: m.range, text: replaceText }));
     model.pushEditOperations([], edits, () => null);

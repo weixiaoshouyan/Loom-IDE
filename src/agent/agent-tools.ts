@@ -212,7 +212,6 @@ function executeReadFile(args: any, context: ToolExecutionContext): string {
       const start = (args.startLine || 1) - 1;
       const end = args.endLine ? args.endLine : lines.length;
       const selectedLines = lines.slice(start, end);
-      const lineNums = selectedLines.map((_, i) => String(start + i + 1).padStart(4, ' ') + '| ').join('');
       return `File: ${filePath} (from editor buffer)\nLines ${start + 1}-${Math.min(end, lines.length)}:\n\`\`\`\n${selectedLines.map((l, i) => `${start + i + 1}| ${l}`).join('\n')}\n\`\`\``;
     }
   }
@@ -247,10 +246,14 @@ function executeWriteFile(args: any, context: ToolExecutionContext): string {
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  const existed = fs.existsSync(filePath);
   fs.writeFileSync(filePath, args.content, 'utf-8');
   
-  context.onFileCreated?.(filePath, args.content);
-  context.onFileChanged?.(filePath, args.content);
+  if (existed) {
+    context.onFileChanged?.(filePath, args.content);
+  } else {
+    context.onFileCreated?.(filePath, args.content);
+  }
   
   return `Successfully wrote ${args.content.split('\n').length} lines to ${filePath}`;
 }
@@ -258,6 +261,10 @@ function executeWriteFile(args: any, context: ToolExecutionContext): string {
 function executeEditFile(args: any, context: ToolExecutionContext): string {
   const filePath = resolvePath(args.filePath, context.workspacePath);
   
+  if (!isSafePath(filePath, context.workspacePath)) {
+    return `Error: Cannot edit file outside workspace: ${filePath}`;
+  }
+
   if (!fs.existsSync(filePath)) {
     return `Error: File not found: ${filePath}`;
   }
@@ -454,6 +461,8 @@ const DANGEROUS_PATTERNS = [
   />\s*\/dev\/sd/, /rm\s+-rf\s+[\/~]/, /format\s+[a-zA-Z]:/,
   /del\s+\/[sfq]/i, /\|\s*rm/, /;\s*rm/, /&&\s*rm/,
   /`rm|mkfs|dd\s+if=/, /\$\(.*rm/,
+  /eval\s*\(/, /node\s+-e/, /python\s+-c/, /perl\s+-e/,
+  /powershell\s+-[cC]/, /cmd\s+\/c\s+del/i,
 ];
 
 function isDangerousCommand(command: string): boolean {

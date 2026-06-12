@@ -252,16 +252,21 @@ export class AIEngine {
         max_tokens: profile?.maxTokens || 4096,
         temperature: profile?.temperature || 0.7,
         stream: false,
-        tools: AGENT_TOOLS_OPENAI,
-        tool_choice: 'auto',
       };
 
-      // Add system prompt for Anthropic separately
+      // Add system prompt and tools for Anthropic separately
       if (isAnthropic) {
         const sysContent = conversation.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
         body.system = sysContent;
-        // For Anthropic, remove tool_choice
-        delete body.tool_choice;
+        // Anthropic tool format: { name, description, input_schema }
+        body.tools = AGENT_TOOLS.map(t => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.parameters,
+        }));
+      } else {
+        body.tools = AGENT_TOOLS_OPENAI;
+        body.tool_choice = 'auto';
       }
 
       const url = isAnthropic ? `${provider.baseUrl}/messages` : `${provider.baseUrl}/chat/completions`;

@@ -282,6 +282,7 @@ export default function AIAgent({ workspacePath, onClose, openFiles, onOpenFile,
   const agentModeRef = useRef(agentMode);
   const onOpenFileRef = useRef(onOpenFile);
   const onApplyEditRef = useRef(onApplyEdit);
+  const loadingRef = useRef(loading);
   
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { openFilesRef.current = openFiles; }, [openFiles]);
@@ -291,6 +292,7 @@ export default function AIAgent({ workspacePath, onClose, openFiles, onOpenFile,
   useEffect(() => { agentModeRef.current = agentMode; }, [agentMode]);
   useEffect(() => { onOpenFileRef.current = onOpenFile; }, [onOpenFile]);
   useEffect(() => { onApplyEditRef.current = onApplyEdit; }, [onApplyEdit]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
 
   useEffect(() => {
     saveLocalHistory(messages);
@@ -370,7 +372,7 @@ export default function AIAgent({ workspacePath, onClose, openFiles, onOpenFile,
   const send = useCallback(() => {
     const msg = input.trim();
     const cfg = configRef.current;
-    if (!msg || loading || !cfg) return;
+    if (!msg || loadingRef.current || !cfg) return;
     setInput('');
     
     const skill = activeSkillRef.current;
@@ -411,7 +413,7 @@ export default function AIAgent({ workspacePath, onClose, openFiles, onOpenFile,
             content: fullContent, 
             toolCalls: [...toolCalls], 
             toolResults: [...toolResults],
-            isStreaming: loading,
+            isStreaming: true,
           };
         }
         return c;
@@ -487,7 +489,7 @@ export default function AIAgent({ workspacePath, onClose, openFiles, onOpenFile,
       );
       abortRef.current = abort;
     }
-  }, [input, loading]);
+  }, [input]);
 
   const switchProfile = async (profileId: string) => {
     if (!config) return;

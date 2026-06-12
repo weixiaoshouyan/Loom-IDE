@@ -222,8 +222,8 @@ function GitView({ workspacePath }: { workspacePath: string }) {
   const stage = async (file: string) => { await (window as any).loom.git?.stage?.(workspacePath, file); refresh(); };
   const unstage = async (file: string) => { await (window as any).loom.git?.unstage?.(workspacePath, file); refresh(); };
   const commit = async () => { if (!commitMsg.trim()) return; setActionMsg('Committing...'); await (window as any).loom.git?.commit?.(workspacePath, commitMsg); setCommitMsg(''); setActionMsg(''); refresh(); };
-  const pull = async () => { setActionMsg('Pulling...'); const r = await (window as any).loom.git?.pull?.(workspacePath); setActionMsg(r === true ? 'Pull: up to date' : String(r).substring(0, 200) || 'Pull completed'); setTimeout(() => setActionMsg(''), 3000); refresh(); };
-  const push = async () => { setActionMsg('Pushing...'); const r = await (window as any).loom.git?.push?.(workspacePath); setActionMsg(r === true ? 'Push completed' : String(r).substring(0, 200) || 'Push completed'); setTimeout(() => setActionMsg(''), 3000); refresh(); };
+  const pull = async () => { setActionMsg('Pulling...'); const r = await (window as any).loom.git?.pull?.(workspacePath); setActionMsg(typeof r === 'string' && r.includes('Already up to date') ? 'Pull: up to date' : String(r).substring(0, 200) || 'Pull completed'); setTimeout(() => setActionMsg(''), 3000); refresh(); };
+  const push = async () => { setActionMsg('Pushing...'); const r = await (window as any).loom.git?.push?.(workspacePath); setActionMsg(typeof r === 'string' && r.includes('Everything up-to-date') ? 'Push: up to date' : String(r).substring(0, 200) || 'Push completed'); setTimeout(() => setActionMsg(''), 3000); refresh(); };
   const switchBranch = async (branch: string) => { setActionMsg(`Switching to ${branch}...`); await (window as any).loom.git?.checkout?.(workspacePath, branch); setActionMsg(''); refresh(); window.dispatchEvent(new CustomEvent('loom:refresh-tree')); };
 
   const statusIcons: Record<string, string> = {
@@ -327,7 +327,7 @@ function GitView({ workspacePath }: { workspacePath: string }) {
                 {branches.map(b => (
                   <div key={b} className="tree-item" style={{ paddingLeft: 8, fontSize: 12, color: b === currentBranch ? 'var(--accent)' : 'var(--text-primary)', gap: 6 }}
                     onClick={() => { if (b !== currentBranch) switchBranch(b); }}>
-                    {b === currentBranch && <span style={{ color: 'var(--accent)' }}>?</span>}
+                    {b === currentBranch && <span style={{ color: 'var(--accent)' }}>&#10003;</span>}
                     {b !== currentBranch && <span style={{ width: 10 }} />}
                     {b}
                   </div>
@@ -382,7 +382,7 @@ function ExtensionsView({}: {}) {
                 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ext.version}</span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ext.description}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>{ext.author} ? {ext.installed ? 'Installed' : 'Not installed'}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>{ext.author} · {ext.installed ? 'Installed' : 'Not installed'}</div>
             </div>
           ))}
         </div>
