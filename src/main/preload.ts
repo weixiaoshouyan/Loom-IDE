@@ -96,6 +96,7 @@ const loom: Loom = {
     getOrcaProviders: () => ipcRenderer.invoke('ai:getOrcaProviders'),
     approvePlan: (sid) => ipcRenderer.invoke('ai:agent-plan-approve', sid),
     rejectPlan: (sid) => ipcRenderer.invoke('ai:agent-plan-reject', sid),
+    rejectAgentEdit: (sid, filePath) => ipcRenderer.invoke('ai:agent-reject-edit', sid, filePath),
     agentChatStream: (messages, workspacePath, openFiles, onChunk, onEnd, onError,
       onFilePreview, onFileCreated, onFileChanged, onPlanAwait, options) => {
       const id = crypto.randomUUID();
@@ -103,7 +104,7 @@ const loom: Loom = {
       const endListener = (_e: IpcRendererEvent, rid: string, usage?: unknown) => { if (rid === id) { onEnd(usage as LoomUsage | null | undefined); cleanup(); } };
       const errorListener = (_e: IpcRendererEvent, rid: string, error: string) => { if (rid === id) { onError(new Error(error)); cleanup(); } };
       const filePreviewListener = (_e: IpcRendererEvent, rid: string, filePath: string, content: string, existed: boolean, originalContent: string) => {
-        if (rid === id && onFilePreview) onFilePreview(filePath, content, existed, originalContent);
+        if (rid === id && onFilePreview) onFilePreview(filePath, content, existed, originalContent, id);
       };
       const fileCreatedListener = (_e: IpcRendererEvent, rid: string, filePath: string, content: string) => { if (rid === id && onFileCreated) onFileCreated(filePath, content); };
       const fileChangedListener = (_e: IpcRendererEvent, rid: string, filePath: string, content: string) => { if (rid === id && onFileChanged) onFileChanged(filePath, content); };

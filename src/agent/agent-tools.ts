@@ -245,8 +245,19 @@ export const AGENT_TOOLS: AgentTool[] = [
     },
   },
   {
+    name: 'git_stage',
+    description: 'Stage specific files for commit. You must stage files explicitly before git_commit — git_commit only commits already-staged changes and refuses to auto-stage. Inspect git_status/git_diff first, then stage exactly the files the user wants in the commit.',
+    parameters: {
+      type: 'object',
+      properties: {
+        files: { type: 'array', items: { type: 'string' }, description: 'Relative or absolute paths of files to stage (workspace-scoped).' },
+      },
+      required: ['files'],
+    },
+  },
+  {
     name: 'git_commit',
-    description: 'Stage all changes and create a git commit with the provided message.',
+    description: 'Create a git commit with the provided message. Only commits changes that were explicitly staged with git_stage. If the staging area is empty the call fails — run git_stage first.',
     parameters: {
       type: 'object',
       properties: {
@@ -448,7 +459,17 @@ export interface ToolExecutionContext {
   /** Token budget event callback — tools can report estimated token cost */
   onTokenBudgetEvent?: (event: TokenBudgetEvent) => void;
   /** Pending file edits that haven't been applied yet (for review queue) */
-  pendingEdits?: { filePath: string; content: string; existed: boolean; originalContent: string }[];
+  pendingEdits?: { filePath: string; content: string; existed: boolean; originalContent: string; rejected?: boolean }[];
+  /**
+   * Per-file review gate (shared with the main process). Values:
+   * - 'pending'  — proposed, awaiting user review
+   * - 'rejected' — user rejected the change; apply_pending_edits must skip it
+   * - 'applied'  — already written to disk
+   * `apply_pending_edits` only honors 'rejected'; everything else is applied.
+   */
+  editGate?: Map<string, 'pending' | 'rejected' | 'applied'>;
+  /** Currently activated skill (injected into the system prompt when set). */
+  activeSkillId?: string;
 }
 
 const MAX_SEARCH_RESULTS = 30;
@@ -583,6 +604,8 @@ export async function executeToolCall(
         return await executeGitStatus(context);
       case 'git_diff':
         return await executeGitDiff(args, context);
+      case 'git_stage':
+        return await executeGitStage(args, context);
       case 'git_commit':
         return await executeGitCommit(args, context);
       case 'list_skills':
@@ -714,6 +737,7 @@ function executeWriteFile(args: any, context: ToolExecutionContext): string {
     // Add to pending edits queue for review
     if (!context.pendingEdits) context.pendingEdits = [];
     context.pendingEdits.push({ filePath, content: args.content, existed, originalContent });
+    context.editGate?.set(filePath, 'pending');
     context.onFilePreview?.(filePath, args.content, existed, originalContent);
     return `Proposed write of ${args.content.split('\n').length} lines to ${filePath}. Review the diff before applying. ${context.pendingEdits.length} edit(s) pending.`;
   }
@@ -777,6 +801,7 @@ function executeEditFile(args: any, context: ToolExecutionContext): string {
     // Add to pending edits queue for review
     if (!context.pendingEdits) context.pendingEdits = [];
     context.pendingEdits.push({ filePath, content: newContent, existed: true, originalContent: content });
+    context.editGate?.set(filePath, 'pending');
     context.onFilePreview?.(filePath, newContent, true, content);
     return `Proposed edit to ${filePath}. Review the diff before applying. ${context.pendingEdits.length} edit(s) pending.`;
   }
@@ -1178,40 +1203,39 @@ function executeRestoreCheckpoint(args: any, context: ToolExecutionContext): str
 }
 
 function executeGetDiagnostics(args: any, context: ToolExecutionContext): string {
-  const diags = context.diagnostics || [];
-  if (diags.length === 0) {
-    return 'No diagnostics found. The code appears to be clean! ✨';
+  // Honest implementation: `context.diagnostics` is never populated anywhere,
+  // so the old version always reported "code is clean ✨" — actively misleading.
+  // Run the real TypeScript checker instead (same as read_lints), filtered by file.
+  const ws = context.workspacePath;
+  if (!ws) return 'Error: no workspace open — cannot run static diagnostics.';
+  if (!fs.existsSync(path.join(ws, 'tsconfig.json'))) {
+    return 'No tsconfig.json found in this workspace; TypeScript static diagnostics are unavailable. Use read_lints for configured checks, or run_command with the project\'s linter.';
   }
-
-  const filePath = args.filePath;
-  const filtered = filePath ? diags.filter(d => d.file === filePath || d.file?.endsWith(filePath)) : diags;
-
-  if (filtered.length === 0) {
-    return `No diagnostics found for ${filePath || 'any files'}.`;
-  }
-
-  const errors = filtered.filter(d => d.severity === 'error');
-  const warnings = filtered.filter(d => d.severity === 'warning');
-  const infos = filtered.filter(d => d.severity === 'info');
-
-  let output = `Diagnostics: ${errors.length} errors, ${warnings.length} warnings, ${infos.length} info\n\n`;
-  
-  if (errors.length > 0) {
-    output += `❌ Errors:\n`;
-    for (const e of errors.slice(0, 10)) {
-      output += `  ${e.file || ''}${e.line ? `:${e.line}` : ''} - ${e.message}\n`;
+  try {
+    const tscResult = spawnSync('npx', ['tsc', '--noEmit', '--pretty'], {
+      cwd: ws,
+      encoding: 'utf-8',
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+      shell: false,
+    });
+    let output = (tscResult.stdout || '') + (tscResult.stderr || '');
+    if (!output || output.includes('No inputs were found')) {
+      return 'TypeScript check passed — no diagnostics.';
     }
-    output += '\n';
-  }
-  if (warnings.length > 0) {
-    output += `⚠️ Warnings:\n`;
-    for (const w of warnings.slice(0, 10)) {
-      output += `  ${w.file || ''}${w.line ? `:${w.line}` : ''} - ${w.message}\n`;
+    const filePath = args.filePath;
+    if (filePath) {
+      const norm = String(filePath).replace(/\\/g, '/');
+      const lines = output.split('\n').filter(l => l.includes(norm));
+      if (lines.length === 0) return `TypeScript check passed — no diagnostics for ${filePath}.`;
+      output = lines.join('\n');
     }
-    output += '\n';
+    return output.substring(0, 5000);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 工具层异常处理，返回给模型阅读
+  } catch (e: any) {
+    return `Diagnostics error: ${e.message || 'Unknown error'}`;
   }
-  
-  return output;
 }
 
 function executeReadLints(args: any, context: ToolExecutionContext): string {
@@ -1387,13 +1411,45 @@ async function executeGitDiff(args: any, context: ToolExecutionContext): Promise
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 工具参数由模型 JSON 驱动，无法静态化
+async function executeGitStage(args: any, context: ToolExecutionContext): Promise<string> {
+  if (!context.onGitCommand) {
+    return 'Error: Git integration not available';
+  }
+  if (!Array.isArray(args.files) || args.files.length === 0) {
+    return 'Error: git_stage requires a non-empty files list.';
+  }
+  const resolved: string[] = [];
+  for (const f of args.files) {
+    const filePath = resolvePath(String(f), context.workspacePath);
+    if (!isSafePath(filePath, context.workspacePath)) {
+      return `Error: Cannot stage path outside workspace: ${filePath}`;
+    }
+    resolved.push(filePath);
+  }
+  try {
+    const result = await context.onGitCommand('add', ['--', ...resolved]);
+    return `Staged ${resolved.length} file(s):\n${result}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 工具层异常处理
+  } catch (e: any) {
+    return `Git stage error: ${e.message}`;
+  }
+}
+
 async function executeGitCommit(args: any, context: ToolExecutionContext): Promise<string> {
   if (!context.onGitCommand) {
     return 'Error: Git integration not available';
   }
 
   try {
-    await context.onGitCommand('add', ['-A']);
+    // Safety gate: never auto-stage. Commit only what the user (via the agent's
+    // git_stage calls) explicitly staged. `git diff --cached --quiet` exits 0
+    // when the staging area is empty.
+    const staged = await context.onGitCommand('diff', ['--cached', '--quiet']);
+    const emptyStagingArea = staged.trim() === '' && !/\d+ files? changed/.test(staged);
+    if (emptyStagingArea) {
+      return 'Error: nothing is staged. Inspect git_status/git_diff, then stage exactly the intended files with git_stage before committing.';
+    }
     const result = await context.onGitCommand('commit', ['-m', args.message]);
     return `Commit successful:\n${result}`;
   } catch (e: any) {
@@ -1853,7 +1909,8 @@ function executeListPendingEdits(context: ToolExecutionContext): string {
   const lines = [`Pending Edits (${pending.length}):`];
   for (const edit of pending) {
     const status = edit.existed ? 'modified' : 'new';
-    lines.push(`  • ${edit.filePath} (${status}, ${edit.content.split('\n').length} lines)`);
+    const flag = edit.rejected ? ' (rejected by user — will be skipped on apply)' : '';
+    lines.push(`  • ${edit.filePath} (${status}, ${edit.content.split('\n').length} lines)${flag}`);
   }
   lines.push('\nUse "apply_pending_edits" to commit or "undo_last_edit" to revert.');
   return lines.join('\n');
@@ -1865,9 +1922,16 @@ function executeApplyPendingEdits(context: ToolExecutionContext): string {
     return 'No pending edits to apply.';
   }
   let applied = 0;
+  let skipped = 0;
   for (const edit of pending) {
+    // User review gate: rejected edits are never written to disk.
+    if (edit.rejected || context.editGate?.get(edit.filePath) === 'rejected') {
+      skipped++;
+      continue;
+    }
     try {
       fs.writeFileSync(edit.filePath, edit.content, 'utf-8');
+      context.editGate?.set(edit.filePath, 'applied');
       if (edit.existed) {
         context.onFileChanged?.(edit.filePath, edit.content);
       } else {
@@ -1878,6 +1942,9 @@ function executeApplyPendingEdits(context: ToolExecutionContext): string {
   }
   const count = pending.length;
   pending.length = 0; // clear the queue
+  if (skipped > 0) {
+    return `Applied ${applied}/${count} pending edits (${skipped} rejected by user were skipped).`;
+  }
   return `Applied ${applied}/${count} pending edits.`;
 }
 

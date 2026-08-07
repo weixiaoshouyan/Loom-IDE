@@ -41,6 +41,7 @@ interface TfIdfIndex {
 }
 
 let _tfidfIndex: TfIdfIndex | null = null;
+let _tfidfKey = '';
 
 function tokenize(text: string): string[] {
   return text.toLowerCase()
@@ -76,8 +77,11 @@ function buildTfIdfIndex(symbols: CodeSymbol[]): TfIdfIndex {
 }
 
 function getTfIdfIndex(index: CodeIndex): TfIdfIndex {
-  if (!_tfidfIndex || _tfidfIndex.totalDocs !== index.symbols.length) {
+  // 缓存必须按 workspace 隔离：仅比较符号数量会让不同工作区（符号数恰好相同）
+  // 复用错误索引，导致跨目录搜索返回错乱结果。
+  if (!_tfidfIndex || _tfidfKey !== index.workspacePath || _tfidfIndex.totalDocs !== index.symbols.length) {
     _tfidfIndex = buildTfIdfIndex(index.symbols);
+    _tfidfKey = index.workspacePath;
   }
   return _tfidfIndex;
 }
@@ -274,5 +278,6 @@ function extractContext(symbol: CodeSymbol, query: string, contextLines: number)
 /** Invalidate cached indexes (call after code index rebuild) */
 export function invalidateSearchCache(): void {
   _tfidfIndex = null;
+  _tfidfKey = '';
   _refGraph = null;
 }

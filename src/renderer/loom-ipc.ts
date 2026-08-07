@@ -97,7 +97,8 @@ export interface LoomAgentChatHandlers {
   onChunk: (chunk: LoomAgentStreamChunk) => void;
   onEnd: (usage?: LoomUsage | null) => void;
   onError: (err: Error) => void;
-  onFilePreview?: (filePath: string, content: string, existed: boolean, originalContent: string) => void;
+  /** sid is the current agent stream id — used by the UI to reject pending edits. */
+  onFilePreview?: (filePath: string, content: string, existed: boolean, originalContent: string, sid?: string) => void;
   onFileCreated?: (filePath: string, content: string) => void;
   onFileChanged?: (filePath: string, content: string) => void;
   onPlanAwait?: (planText: string, sid: string) => void;
@@ -109,6 +110,8 @@ export interface LoomAgentChatOptions {
   plannerMode?: boolean;
   planOnly?: boolean;
   verifyMode?: boolean;
+  /** Currently activated skill id — its prompt is injected into the agent system prompt. */
+  activeSkillId?: string;
 }
 
 export interface LoomAI {
@@ -157,6 +160,12 @@ export interface LoomAI {
   getOrcaProviders: () => Promise<unknown[]>;
   approvePlan: (sid: string) => Promise<boolean>;
   rejectPlan: (sid: string) => Promise<boolean>;
+  /**
+   * Reject a proposed agent edit. Returns { rejected, applied } — if
+   * `applied` is true the change was already written to disk and must be
+   * reverted manually.
+   */
+  rejectAgentEdit: (sid: string, filePath: string) => Promise<{ rejected: boolean; applied: boolean; reason?: string }>;
   agentChatStream: (
     messages: unknown[],
     workspacePath: string,
@@ -164,7 +173,7 @@ export interface LoomAI {
     onChunk: (chunk: LoomAgentStreamChunk) => void,
     onEnd: (usage?: LoomUsage | null) => void,
     onError: (err: Error) => void,
-    onFilePreview?: (filePath: string, content: string, existed: boolean, originalContent: string) => void,
+    onFilePreview?: (filePath: string, content: string, existed: boolean, originalContent: string, sid?: string) => void,
     onFileCreated?: (filePath: string, content: string) => void,
     onFileChanged?: (filePath: string, content: string) => void,
     onPlanAwait?: (planText: string, sid: string) => void,

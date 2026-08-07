@@ -25,6 +25,13 @@ let _skillManager: any = null;
 let _cloudSync: any = null;
 let _commandQueue: DevelopmentCommandQueue | null = null;
 
+/**
+ * Per-stream edit review gates. `ai:agent-reject-edit` marks a proposed file
+ * change as rejected; the agent's apply_pending_edits then skips it (see
+ * ToolExecutionContext.editGate in agent-tools.ts). Cleared when the stream ends.
+ */
+const pendingEditGates = new Map<string, Map<string, 'pending' | 'rejected' | 'applied'>>();
+
 export function setAIStreamSingletons(opts: {
   mainWindow: any;
   aiEngine: AIEngine;
@@ -74,6 +81,7 @@ function getEngine(): AIEngine {
 // renderer would let a single IPC call chew arbitrary amounts of memory.
 const MAX_AI_MESSAGES = 500;
 const MAX_AI_MESSAGE_CHARS = 200_000;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 消息来自 IPC（renderer 端已是 any），此处仅做上限截断
 function sanitizeMessages(messages: any[] | undefined | null): any[] {
   if (!Array.isArray(messages)) return [];
   return messages.slice(0, MAX_AI_MESSAGES).map((m) => {
@@ -164,6 +172,8 @@ export function registerAIHandlers() {
     const controller = new AbortController();
     const streamState = { abort: false, controller };
     activeStreams.set(id, streamState);
+    const editGate = new Map<string, 'pending' | 'rejected' | 'applied'>();
+    pendingEditGates.set(id, editGate);
 
     const callbacks = buildAgentCallbacks(id, workspacePath, 'agent');
 
@@ -184,6 +194,8 @@ export function registerAIHandlers() {
             name: s.name,
             tools: getMcpClient()?.getServerTools(s.id).map((t: any) => ({ name: t.name, description: t.description || '' })) || [],
           })) || [],
+          editGate,
+          activeSkillId: options?.activeSkillId,
           onActivateSkill: callbacks.onActivateSkill,
           onCallMcpTool: callbacks.onCallMcpTool,
           onGitCommand: callbacks.onGitCommand,
@@ -224,6 +236,7 @@ export function registerAIHandlers() {
       } finally {
         activeStreams.delete(id);
         pendingPlanApprovals.delete(id);
+        pendingEditGates.delete(id);
       }
     })();
   });
@@ -238,6 +251,25 @@ export function registerAIHandlers() {
     const r = pendingPlanApprovals.get(sid);
     if (r) { pendingPlanApprovals.delete(sid); r(false); }
     return true;
+  });
+
+  /**
+   * Mark a proposed agent file edit as rejected. If the change was already
+   * applied to disk the agent cannot undo it automatically — the caller is
+   * told so it can offer manual revert instead of claiming a rollback.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 与既有 plan approve/reject handler 一致
+  ipcMain.handle('ai:agent-reject-edit', (_e: any, sid: string, filePath: string) => {
+    const gate = pendingEditGates.get(sid);
+    if (!gate || !filePath) {
+      return { rejected: false, applied: true, reason: 'stream finished or unknown file' };
+    }
+    const state = gate.get(filePath);
+    if (state === 'applied') {
+      return { rejected: false, applied: true, reason: 'change was already applied to disk' };
+    }
+    gate.set(filePath, 'rejected');
+    return { rejected: true, applied: false };
   });
 
   // ---- Sub-agent (parallel exploration) -------------------------------------

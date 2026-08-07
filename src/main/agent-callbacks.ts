@@ -16,6 +16,7 @@ import { runGit } from './git-handlers';
 import {
   buildCodeIndex, loadCodeIndex, saveCodeIndex, searchCodeIndex,
 } from '../agent/code-index';
+import { semanticSearch } from '../agent/semantic-search';
 import { DevelopmentCommandQueue, DevelopmentCommandRequest, DevelopmentCommandEvent, DevelopmentCommandResult } from '../agent/development-command';
 
 // Module-level singletons, set by index.ts during `whenReady`.
@@ -86,6 +87,13 @@ export function buildAgentCallbacks(
       }
       codeIndexCache.set(workspacePath, idx);
     }
+    // 语义检索（TF-IDF + 名称/引用图打分）优先；结果不足时回退到关键词子串检索。
+    try {
+      const semantic = semanticSearch(idx, { query, topK, includeContext: false, minScore: 0.05 });
+      if (semantic.length >= Math.min(3, topK)) {
+        return semantic.map(r => r.symbol);
+      }
+    } catch { /* fall through to keyword search */ }
     return searchCodeIndex(idx, query, topK);
   };
 

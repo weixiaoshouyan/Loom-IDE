@@ -744,6 +744,11 @@ export class AIEngine {
       agentOperatingRulesText +
       ragContext +
       (toolContext.teamRules || '');
+    // 已激活的 skill 注入 system prompt，让模型遵循 skill 的具体指令
+    const skillPrompt = this.skillManager?.getSkillSystemPrompt(toolContext.activeSkillId);
+    if (skillPrompt) {
+      systemPrompt += skillPrompt;
+    }
     if (plannerMode) {
       systemPrompt = addPlannerPrompt(systemPrompt);
     }
@@ -758,9 +763,28 @@ export class AIEngine {
     if (streamId) this.tokenUsage.delete(streamId); // 新一轮运行从 0 开始，避免与历史会话累计混淆
     this.lastUsage = { input: 0, output: 0 };
 
+    // 运行快照：流结束时（正常/中止/出错/预算耗尽）保存到 .loom/agent-checkpoints/，
+    // 供未来「恢复运行」使用（此前 CheckpointManager 从未被接线，纯死代码）。
+    const saveCheckpoint = () => {
+      if (!checkpointMgr || !checkpointId) return;
+      try {
+        checkpointMgr.save({
+          id: checkpointId,
+          version: 1,
+          createdAt: Date.now(),
+          workspacePath: toolContext.workspacePath || '',
+          messages: conversation,
+          scratchpad: scratchpad.toJSON(),
+          state: stateMachine.snapshot(),
+          streamId,
+        });
+      } catch { /* checkpoint save is best-effort */ }
+    };
+
     for (let round = 0; round < maxToolRounds; round++) {
       // Check abort between rounds
       if (abortSignal?.aborted) {
+        saveCheckpoint();
         yield { type: 'error', content: 'Agent operation cancelled by user.' };
         return;
       }
@@ -773,6 +797,7 @@ export class AIEngine {
       // Check token budget
       const budgetEvent = tokenBudget.recordUsage(0, 0); // Will be updated after API call
       if (budgetEvent.type === 'termination') {
+        saveCheckpoint();
         yield { type: 'error', content: `Token budget exhausted (${budgetEvent.used}/${tokenBudget.usedTokens} tokens used). Please summarize what was accomplished.` };
         return;
       }
@@ -934,6 +959,8 @@ export class AIEngine {
             if (streamId) this.recordTokenUsage(streamId, uIn, uOut);
             const prev: { input: number; output: number } = this.lastUsage || { input: 0, output: 0 };
             this.lastUsage = { input: prev.input + uIn, output: prev.output + uOut };
+            // 真实累计到 token 预算，供压缩/终止判定（原实现每轮 recordUsage(0,0)，预算形同虚设）
+            tokenBudget.recordUsage(uIn, uOut);
           }
         }
 
@@ -975,16 +1002,21 @@ export class AIEngine {
             planEmitted = true;
             emittedStructuredPlan = true;
             yield { type: 'plan', content: formatPlanForDisplay(plan) };
-            if (planOnly) return;
+            if (planOnly) {
+              saveCheckpoint();
+              return;
+            }
             // 非 planOnly 模式下，如需用户确认则暂停并等待审批回调
             if (options?.planApproval) {
               const approved = await options.planApproval(formatPlanForDisplay(plan));
               if (!approved) {
+                saveCheckpoint();
                 yield { type: 'error', content: 'Plan was rejected by the user. Operation stopped.' };
                 return;
               }
             }
           } else if (planOnly) {
+            saveCheckpoint();
             yield { type: 'error', content: 'Planner did not return a valid structured plan.' };
             return;
           }
@@ -1017,6 +1049,7 @@ export class AIEngine {
             }
           }
           // No tool calls, conversation complete
+          saveCheckpoint();
           return;
         }
 
@@ -1069,11 +1102,13 @@ export class AIEngine {
           });
         }
       } catch (e: any) {
+        saveCheckpoint();
         yield { type: 'error', content: `Error: ${e.message}` };
         return;
       }
     }
 
+    saveCheckpoint();
     const finalSummary = await this.completeAgentFinalSummary(conversation, provider, profile);
     if (finalSummary) {
       yield { type: 'text', content: finalSummary };

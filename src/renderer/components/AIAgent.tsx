@@ -381,6 +381,8 @@ export default function AIAgent({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const currentSessionIdRef = useRef<string>(crypto.randomUUID());
   const pendingPlanStreamIdRef = useRef<string | null>(null);
+  // 当前 agent 流 id（onFilePreview 回调透传），用于拒绝尚未落盘的修改
+  const currentStreamIdRef = useRef<string | null>(null);
   const terminalId = useMemo(() => `assistant-agent-${Math.random().toString(36).slice(2)}`, []);
 
   // ===== @-mention popover =====
@@ -681,9 +683,22 @@ export default function AIAgent({
     setReviewQueue(prev => acceptReviewItem(prev, id));
   }, [notify, onApplyEdit, onOpenFile, reviewQueue]);
 
-  const rejectChange = useCallback((id: string) => {
+  const rejectChange = useCallback(async (id: string) => {
     const item = reviewQueue.find(entry => entry.id === id);
-    if (item) notify(`已回滚 ${basename(item.filePath)}`, 'info');
+    if (!item) return;
+    let applied = false;
+    const sid = currentStreamIdRef.current;
+    if (sid && item.filePath) {
+      try {
+        const res = await window.loom?.ai?.rejectAgentEdit?.(sid, item.filePath);
+        applied = !!res?.applied;
+      } catch { /* IPC 失败时按未知处理，仅本地移除 */ }
+    }
+    if (applied) {
+      notify(`已拒绝 ${basename(item.filePath)}，但该修改可能已写入磁盘，请按 Ctrl+Z 手动撤销`, 'info');
+    } else {
+      notify(`已拒绝 ${basename(item.filePath)}，agent 将跳过该修改`, 'info');
+    }
     setReviewQueue(prev => rejectReviewItem(prev, id));
   }, [notify, reviewQueue]);
 
@@ -932,7 +947,10 @@ export default function AIAgent({
             abortRef.current = null;
             pendingPlanStreamIdRef.current = null;
           },
-          addReview,
+          (filePath: string, content: string, existed: boolean, originalContent: string, sid?: string) => {
+            if (sid) currentStreamIdRef.current = sid;
+            addReview(filePath, content, existed, originalContent);
+          },
           (filePath: string, content: string) => addReview(filePath, content, false, ''),
           (filePath: string, content: string) => addReview(filePath, content, true, openFiles.find(file => file.path === filePath)?.content || ''),
           (planText: string, sid: string) => {
@@ -944,6 +962,8 @@ export default function AIAgent({
             autoApplySafeEdits,
             plannerMode,
             verifyMode,
+            // 已激活的 skill 注入 agent system prompt
+            activeSkillId: activeSkillId || undefined,
             // planner 模式语义为「先出计划→等待审批→再执行」，故 planOnly 必须为 false，
             // 否则 ai-engine 会在输出 plan 后立即 return，审批链路（planApproval）变为死代码。
             planOnly: false,
