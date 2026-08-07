@@ -59,9 +59,9 @@ export function registerSettingsHandlers() {
     // settings:getAll — never let the placeholder overwrite real keys.
     if (newCfg && Array.isArray(newCfg.aiConfig?.providers)) {
       const existing = loadConfig();
-      newCfg.aiConfig.providers = newCfg.aiConfig.providers.map((incoming: any) => {
+      newCfg.aiConfig.providers = newCfg.aiConfig.providers.map((incoming: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any -- IPC boundary
         if (incoming?.apiKey !== API_KEY_MASK) return incoming;
-        const cur = existing.aiConfig?.providers?.find((p: any) => p.id === incoming.id);
+        const cur = existing.aiConfig?.providers?.find((p: any) => p.id === incoming.id); // eslint-disable-line @typescript-eslint/no-explicit-any -- IPC boundary
         return { ...incoming, apiKey: cur?.apiKey ?? '' };
       });
     }

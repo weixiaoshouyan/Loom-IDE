@@ -122,14 +122,14 @@ async function importCursorMCPConfig(workspacePath: string) {
     const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
     const servers = normalizeMCPServerConfigs(parsed) || [];
     const existing = new Set(mcpClient.getAllServers().map((s: any) => s.id));
-    const fresh = servers.filter((s: any) => !existing.has(s.id));
+    const fresh = servers.filter((s: any) => !existing.has(s.id)); // eslint-disable-line @typescript-eslint/no-explicit-any -- IPC boundary
     if (fresh.length === 0) return;
 
     // SECURITY: never silently import and spawn servers from a project file.
     // `.cursor/mcp.json` entries commonly run `npx -y <pkg>`, which downloads
     // and executes arbitrary code from npm — a malicious repo could otherwise
     // get a shell-equivalent running on folder open.
-    const names = fresh.map((s: any) => s.id).join(', ');
+    const names = fresh.map((s: any) => s.id).join(', '); // eslint-disable-line @typescript-eslint/no-explicit-any -- IPC boundary
     const win = resolvedMainWindow && !resolvedMainWindow.isDestroyed() ? resolvedMainWindow : undefined;
     const { response } = await dialog.showMessageBox(win!, {
       type: 'question',

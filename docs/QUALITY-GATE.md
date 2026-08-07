@@ -30,17 +30,17 @@
 
 | 检查项 | 状态 | 说明 |
 |---|---|---|
-| `tsc --noEmit`（双配置） | ✅ 绿 | 0 错误 |
-| ESLint | ⚙️ 配置就绪 | 沙盒未安装 eslint；联网后 `npm run lint` 可跑（renderer 现纳入范围） |
-| `npm test` | ⚠️ 104 passed / 1 failed | 见下 |
+| `tsc --noEmit`（双配置） | ✅ 绿 | 0 错误（`config/tsconfig*.json`） |
+| ESLint | ✅ 绿 | `npm run lint` 可跑：0 errors（存量 `any` 警告见 `npm run lint:any-count`） |
+| `npm test` | ✅ 绿 | 26 文件 213 用例全过（含 symlink 路径穿越用例） |
 
-**失败用例**：`src/agent/agent-tools.test.ts > blocks symlink escape`
-- 期望 `Cannot read path outside workspace`，实际 `File not found`。
-- 根因：**本沙盒 symlink 解析受限**（`realpathSync` 抛错被 `isSafePath` 的 `catch` 吞掉跳过校验，且 `existsSync` 对受限 symlink 返回 false）。属**环境限制，非代码缺陷**——核心的非 symlink 路径穿越防护用例正常通过。
-- CI 跑在 `ubuntu-latest`，symlink 正常，该用例应通过。
-- 建议（二选一，待你确认再动安全逻辑）：
-  (a) 让该用例在 symlink/realpath 不支持时优雅 skip；或
-  (b) 加固 `isSafePath`：**存在的路径若 `realpathSync` 失败即拦截**（而非跳过），提升受限环境下的安全性。
+**历史失败用例**：`src/agent/agent-tools.test.ts > blocks symlink escape`
+- 早期在 symlink 受限的沙盒环境中失败（`realpathSync` 受限），属环境限制非代码缺陷；
+- 在 Windows 本地与 ubuntu CI 上该用例正常通过，现已纳入全绿基线。
+
+**发布配置注意**（electron-builder）：
+- `publish.url` 为占位域 `https://updates.loom-ide.example/`——接入真实更新服务器前不要使用 `npm run build:publish`（`--publish=always` 会失败）；本地构建请用 `npm run build`。
+- `npmRebuild: true`：`node-pty` 是原生模块，打包时必须按 Electron ABI 重新编译，否则打包版终端功能崩溃。CI 的 windows runner 自带编译工具链。
 
 ## 三、团队落地运行手册
 

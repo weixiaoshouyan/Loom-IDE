@@ -67,7 +67,7 @@
         "url": "https://updates.loom-ide.example/"
       }
     ],
-    "npmRebuild": false,
+    "npmRebuild": true,
     "directories": {
       "output": "release"
     },

@@ -85,6 +85,7 @@ function isInsideRoot(root: string, target: string): boolean {
 // not a jail for intentionally malicious plugins.
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- vm boundary is inherently dynamic
 function safeHostFn<T extends (...args: any[]) => any>(fn: T, wrapResult = false): T {
   return new Proxy(fn, {
     apply(target, thisArg, args) {
@@ -100,6 +101,7 @@ function safeHostFn<T extends (...args: any[]) => any>(fn: T, wrapResult = false
   }) as T;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- vm boundary is inherently dynamic
 function sandboxSafe(value: any, depth = 0): any {
   if (depth > 3) return value;
   if (typeof value === 'function') return safeHostFn(value, true);
@@ -119,16 +121,18 @@ function sandboxSafe(value: any, depth = 0): any {
   return value;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- console shim is dynamic
 function buildSafeConsole(): Record<string, (...args: any[]) => void> {
-  const c: Record<string, (...args: any[]) => void> = Object.create(null);
+  const c: Record<string, (...args: any[]) => void> = Object.create(null); // eslint-disable-line @typescript-eslint/no-explicit-any -- console shim is dynamic
   for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
     const real = console[level].bind(console);
-    c[level] = safeHostFn((...args: any[]) => real(...args));
+    c[level] = safeHostFn((...args: any[]) => real(...args)); // eslint-disable-line @typescript-eslint/no-explicit-any -- console shim is dynamic
   }
   return c;
 }
 
 /** Prototype-less snapshot of `process` for plugins that declare the capability. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- safe process subset is dynamic
 function buildSafeProcess(): Record<string, any> {
   const env: Record<string, string> = Object.create(null);
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;

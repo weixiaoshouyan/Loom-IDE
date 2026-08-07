@@ -227,6 +227,7 @@ export interface LoomPluginAPI {
   private configPath: string;
   private userConfigPath: string;
   // command id -> array of handlers (multi-extension is allowed; we call all)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- plugin command handlers are dynamic
   private commandRegistry: Map<string, Array<{ plugin: string; handler: (...args: any[]) => any }>> = new Map();
   // configuration key -> { type, default, scope, plugin }
   private configurationRegistry: Map<string, { type: string; default: any; description?: string; plugin: string }> = new Map();
