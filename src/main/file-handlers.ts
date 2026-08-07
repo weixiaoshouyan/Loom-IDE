@@ -9,10 +9,16 @@ import fsPromises from 'fs/promises';
 import path from 'path';
 import { ensurePathAllowed, grantRoot, grantFile } from './path-permissions';
 
+// Cap file sizes so the renderer cannot push arbitrarily large payloads
+// through the main process (memory exhaustion / Monaco freeze).
+const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+
 export function registerFileHandlers() {
   ipcMain.handle('fs:read-file', async (_e: any, filePath: string) => {
     try {
       ensurePathAllowed(filePath);
+      const st = fs.statSync(filePath);
+      if (st.size > MAX_FILE_BYTES) return `__ERR__:File exceeds ${Math.floor(MAX_FILE_BYTES / 1024 / 1024)} MB limit`;
       return fs.readFileSync(filePath, 'utf-8');
     } catch (e: any) {
       return `__ERR__:${e.message}`;
@@ -21,6 +27,9 @@ export function registerFileHandlers() {
 
   ipcMain.handle('fs:write-file', async (_e: any, filePath: string, content: string) => {
     ensurePathAllowed(filePath);
+    if (Buffer.byteLength(content || '', 'utf-8') > MAX_FILE_BYTES) {
+      throw new Error(`Content exceeds ${Math.floor(MAX_FILE_BYTES / 1024 / 1024)} MB limit`);
+    }
     // Atomic write: write to a temp file in the same directory, then rename.
     // Guarantees that a crash mid-write never leaves a truncated target file.
     const dir = path.dirname(filePath);

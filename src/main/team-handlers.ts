@@ -12,6 +12,9 @@ export function setCloudSyncForHandlers(c: any) { _cloudSync = c; }
 
 export function registerTeamHandlers() {
   ipcMain.handle('team:loadRules', (_e: any, workspacePath: string) => {
+    // SECURITY: never read .loom/rules from an arbitrary directory — a crafted
+    // workspacePath would leak rules (and inject their prompt content).
+    if (!workspacePath || !canAccess(workspacePath)) return '';
     const rules = _cloudSync.loadTeamRules(workspacePath);
     return _cloudSync.formatRulesPrompt(rules);
   });
@@ -19,6 +22,7 @@ export function registerTeamHandlers() {
   // Returns per-file instructions for a given relative path, e.g. the UI can
   // show a breadcrumb: "3 rules apply to src/app.ts".
   ipcMain.handle('team:getRulesForFile', (_e: any, workspacePath: string, relPath: string) => {
+    if (!workspacePath || !canAccess(workspacePath)) return [];
     const rules = _cloudSync.loadTeamRules(workspacePath);
     return _cloudSync.getRulesForFile(rules, relPath);
   });

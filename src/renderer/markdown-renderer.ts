@@ -2,10 +2,11 @@
 // Keep this dependency-free so tests can import it without mounting React/xterm.
 export function formatMarkdown(text: string): string {
   if (!text) return '';
-  let html = text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_: string, lang: string, code: string) => {
+  // Extract code blocks FIRST from the RAW text — before escaping — so their
+  // content is escaped exactly once. Escaping the already-escaped text again
+  // inside code blocks turned `<div>` into `&amp;lt;div&amp;gt;` (double-escape bug).
+  const codeBlocks: string[] = [];
+  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_: string, lang: string, code: string) => {
     const langLabel = lang || 'text';
     const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const codeContent = escapedCode.trim();
@@ -22,7 +23,7 @@ export function formatMarkdown(text: string): string {
     }
     const safeFilePath = safeAttr(filePath);
     const fileName = filePath.split(/[\\/]/).pop();
-    return `<details class="code-block-wrapper" data-code="${encodedCode}" data-lang="${safeAttr(langLabel)}"${filePath ? ` data-file="${safeFilePath}"` : ''} open>
+    const block = `<details class="code-block-wrapper" data-code="${encodedCode}" data-lang="${safeAttr(langLabel)}"${filePath ? ` data-file="${safeFilePath}"` : ''} open>
       <summary class="code-block-header">
         <span class="code-collapse-indicator">▶</span>
         <span class="code-lang">${safeAttr(langLabel)}</span>
@@ -32,7 +33,15 @@ export function formatMarkdown(text: string): string {
       </summary>
       <pre class="code-block"><code>${codeContent}</code></pre>
     </details>`;
+    codeBlocks.push(block);
+    return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
+
+  // Escape the remaining (non-code) text exactly once.
+  html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Restore the rendered code blocks.
+  html = html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (_: string, i: string) => codeBlocks[Number(i)]);
 
   html = html.replace(/`([^\n`]+)`/g, '<code class="inline-code">$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');

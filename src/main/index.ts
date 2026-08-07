@@ -15,7 +15,7 @@ import { trace, clearTrace } from './startup-trace';
 clearTrace();
 trace('module-load-start');
 
-import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, shell, screen } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import fs from 'fs';
@@ -149,9 +149,23 @@ function createWindow() {
   const theme = cfg.theme || 'dark';
   const ws = cfg.windowState;
 
+  // Restore window position clamped to a visible display: after an external
+  // monitor is unplugged, saved x/y can land the window off-screen.
+  const savedW = ws?.width || 1400;
+  const savedH = ws?.height || 900;
+  let savedX = ws?.x;
+  let savedY = ws?.y;
+  try {
+    if (savedX !== undefined && savedY !== undefined) {
+      const wa = screen.getDisplayMatching({ x: savedX, y: savedY, width: savedW, height: savedH }).workArea;
+      savedX = Math.min(Math.max(savedX, wa.x), wa.x + wa.width - Math.min(savedW, wa.width));
+      savedY = Math.min(Math.max(savedY, wa.y), wa.y + wa.height - Math.min(savedH, wa.height));
+    }
+  } catch { /* keep saved position on display detection failure */ }
+
   mainWindow = new BrowserWindow({
-    width: ws?.width || 1400, height: ws?.height || 900,
-    x: ws?.x, y: ws?.y,
+    width: savedW, height: savedH,
+    x: savedX, y: savedY,
     minWidth: 900, minHeight: 600,
     title: 'Loom IDE',
     icon: path.join(__dirname, '../../resources/icon.ico'),
@@ -175,6 +189,22 @@ function createWindow() {
   // Wire the new window into every handler module.
   wireWindow(mainWindow);
 
+  // SECURITY: never let the renderer navigate to, or open, external content.
+  // A new BrowserWindow spawned via window.open would inherit this window's
+  // preload, letting an external site call window.loom.* (fs, shell, git)
+  // with the user's privileges. Deny all popups; open http(s)/mailto in the
+  // system browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appUrl = isDev ? 'http://localhost:5174' : `http://localhost:${staticServerPort}`;
+    if (!url.startsWith(appUrl)) event.preventDefault();
+  });
+
   if (ws?.maximized) mainWindow.maximize();
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -197,11 +227,13 @@ function createWindow() {
     mainWindow!.focus();
   });
 
+  // Fallback: if the window never became visible (e.g. renderer crash), show
+  // it after a timeout. Do not force-focus or re-open devtools when the
+  // window is already up and running.
   setTimeout(() => {
-    if (mainWindow) {
-      if (!mainWindow.isVisible()) mainWindow.show();
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
       mainWindow.focus();
-      if (isDev) mainWindow.webContents.openDevTools();
     }
   }, 3000);
 
@@ -354,7 +386,14 @@ app.whenReady().then(async () => {
       autoUpdater.on('error', (err) => {
         console.warn('[AutoUpdater] Error:', err);
       });
-      autoUpdater.checkForUpdates();
+      // The publish URL in package.json is a placeholder until a real update
+      // server exists — checking it every launch would always fail.
+      const updateUrl = (require('../package.json')?.build?.publish?.[0]?.url as string) || '';
+      if (updateUrl.includes('updates.loom-ide.example') || updateUrl.includes('localhost')) {
+        console.warn('[AutoUpdater] publish url is a placeholder — skipping update check.');
+      } else {
+        autoUpdater.checkForUpdates();
+      }
     } catch (e) {
       console.warn('Auto updater init failed (non-critical):', e);
     }

@@ -431,7 +431,7 @@ export default function AIAgent({
       const recents = openFiles.slice(0, 8).map(f => ({
         path: f.path,
         name: f.name,
-        relativePath: workspacePath ? f.path.replace(workspacePath, '').replace(/^[\\/]/, '') : f.path,
+        relativePath: workspacePath ? (f.path || '').replace(workspacePath, '').replace(/^[\\/]/, '') : f.path,
       }));
       setMention(m => ({ ...m, results: recents }));
       return;

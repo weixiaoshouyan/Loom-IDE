@@ -11,6 +11,9 @@ release/
 .loom-tmp*
 *.loom-tmp
 
+# Agent/team artifacts inside user workspaces
+.loom/
+
 # Vite cache
 .vite/
 

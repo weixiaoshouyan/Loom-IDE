@@ -70,16 +70,29 @@ function getEngine(): AIEngine {
   return _aiEngine!;
 }
 
+// Bound the message list every AI handler accepts — unbounded arrays from the
+// renderer would let a single IPC call chew arbitrary amounts of memory.
+const MAX_AI_MESSAGES = 500;
+const MAX_AI_MESSAGE_CHARS = 200_000;
+function sanitizeMessages(messages: any[] | undefined | null): any[] {
+  if (!Array.isArray(messages)) return [];
+  return messages.slice(0, MAX_AI_MESSAGES).map((m) => {
+    if (!m || typeof m !== 'object') return { role: 'user', content: '' };
+    const c = typeof m.content === 'string' ? m.content.slice(0, MAX_AI_MESSAGE_CHARS) : m.content;
+    return { ...m, content: c };
+  });
+}
+
 // ---- Plain chat (non-streaming, returns full response) ---------------------
 export function registerAIHandlers() {
   ipcMain.handle('ai:chat', async (_event: any, messages: ChatMessage[], context?: string) => {
-    return getEngine().chat(messages, context);
+    return getEngine().chat(sanitizeMessages(messages) as ChatMessage[], context);
   });
 
   ipcMain.handle('ai:get-usage', () => getEngine().getTokenUsage());
 
   ipcMain.handle('ai:ask-with', async (_event: any, providerId: string, model: string, messages: any[], context?: string) => {
-    return getEngine().askWith(providerId, model, messages, context);
+    return getEngine().askWith(providerId, model, sanitizeMessages(messages), context);
   });
 
   // ---- 指定模型流式问答（双模型对比用）---------------------------------------
@@ -141,11 +154,13 @@ export function registerAIHandlers() {
   // ---- Agent chat (tool-calling loop) ---------------------------------------
   ipcMain.on('ai:agent-chat-stream', (event: any, id: string, messages: any[], workspacePath: string, openFiles?: any[], options?: any) => {
     // SECURITY: the agent runs git commands, reads rules and indexes files
-    // under workspacePath — it must be inside the granted workspace.
-    if (workspacePath && !canAccess(workspacePath)) {
-      sendToRenderer('ai:agent-chat-error', id, 'Workspace path is not allowed.');
+    // under workspacePath. Without a granted workspace, file tools and
+    // command execution would fall back to the process cwd — refuse instead.
+    if (!workspacePath || !canAccess(workspacePath)) {
+      sendToRenderer('ai:agent-chat-error', id, 'Agent 模式需要先打开一个文件夹作为工作区。');
       return;
     }
+    messages = sanitizeMessages(messages);
     const controller = new AbortController();
     const streamState = { abort: false, controller };
     activeStreams.set(id, streamState);
@@ -228,8 +243,8 @@ export function registerAIHandlers() {
   // ---- Sub-agent (parallel exploration) -------------------------------------
   ipcMain.on('ai:sub-agent-stream', (event: any, id: string, request: string, workspacePath: string, openFiles?: any[]) => {
     // SECURITY: same boundary as ai:agent-chat-stream.
-    if (workspacePath && !canAccess(workspacePath)) {
-      sendToRenderer('ai:sub-agent-error', id, 'Workspace path is not allowed.');
+    if (!workspacePath || !canAccess(workspacePath)) {
+      sendToRenderer('ai:sub-agent-error', id, 'Agent 模式需要先打开一个文件夹作为工作区。');
       return;
     }
     const controller = new AbortController();

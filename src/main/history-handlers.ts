@@ -233,7 +233,9 @@ export function registerHistoryHandlers() {
       const line = JSON.stringify({
         ts: Date.now(),
         size: Buffer.byteLength(content, 'utf-8'),
-        content,
+        // Cap the snapshot payload — oversized contents would bloat the local
+        // history file and degrade snapshot/restore.
+        content: Buffer.byteLength(content || '', 'utf-8') > 1024 * 1024 ? '' : content,
         prevOriginal: (prevOriginal || '').slice(0, 1000),
       });
       fs.appendFileSync(fp, line + '\n', 'utf-8');

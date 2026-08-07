@@ -83,6 +83,9 @@ export function registerPluginHandlers() {
   });
 
   ipcMain.on('plugins:webviewEvent', (event: any, panelId: string, message: any) => {
+    // Only forward events for panels this plugin actually owns — arbitrary
+    // panelIds could otherwise be used to inject messages across panels.
+    if (!panelId || !/^[A-Za-z0-9._-]{1,128}$/.test(panelId)) return;
     pm().postMessageToWebview(panelId, message);
   });
 }

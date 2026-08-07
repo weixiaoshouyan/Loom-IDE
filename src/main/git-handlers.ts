@@ -6,6 +6,7 @@
  */
 import { ipcMain } from 'electron';
 import { spawn } from 'child_process';
+import path from 'path';
 import { ensurePathAllowed } from './path-permissions';
 
 export function runGit(cwd: string, args: string[]): Promise<string> {
@@ -70,6 +71,7 @@ export function registerGitHandlers() {
       if (!ensurePathAllowedSafe(cwd)) return false;
       // SECURITY: `--` prevents a crafted filename starting with `-` (e.g.
       // `-p`) from being parsed as a git option and hanging in interactive mode.
+      if (file && !ensurePathAllowedSafe(path.resolve(cwd, file))) return false;
       await runGit(cwd, ['add', '--', file]);
       return true;
     }
@@ -77,7 +79,12 @@ export function registerGitHandlers() {
   });
 
   ipcMain.handle('git:unstage', async (_e: any, cwd: string, file: string) => {
-    try { if (!ensurePathAllowedSafe(cwd)) return false; await runGit(cwd, ['reset', 'HEAD', '--', file]); return true; }
+    try {
+      if (!ensurePathAllowedSafe(cwd)) return false;
+      if (file && !ensurePathAllowedSafe(path.resolve(cwd, file))) return false;
+      await runGit(cwd, ['reset', 'HEAD', '--', file]);
+      return true;
+    }
     catch { return false; }
   });
 
@@ -121,6 +128,8 @@ export function registerGitHandlers() {
   ipcMain.handle('git:diff', async (_e: any, cwd: string, file?: string) => {
     try {
       if (!ensurePathAllowedSafe(cwd)) return '';
+      // SECURITY: the file must live inside the granted workspace too.
+      if (file && !ensurePathAllowedSafe(path.resolve(cwd, file))) return '';
       const args = ['diff'];
       if (file) args.push('--', file);
       return await runGit(cwd, args);

@@ -102,7 +102,7 @@ export default function App() {
   // Keep the i18n framework locale in sync with the app's React state locale.
   const syncI18nLocale = useCallback((loc: string) => {
     const { setLocale: setI18nLocale } = require('@/shared/i18n');
-    setI18nLocale(loc === 'zh-CN' ? 'zh-CN' : 'en');
+    setI18nLocale(loc === 'zh-CN' ? 'zh-CN' : 'en-US');
   }, []);
 
   useEffect(() => {

@@ -107,18 +107,25 @@ export function registerTerminalHandlers() {
     const t = terminals.get(termId);
     // SECURITY: only the window that created the terminal may write to it.
     if (!t || t.ownerId !== event.sender.id) return;
+    // Cap a single write to 64 KB — larger payloads are never legitimate and
+    // would only abuse the pty buffer.
+    const chunk = typeof data === 'string' ? data.slice(0, 64 * 1024) : '';
     if (t.isPty) {
-      t.process.write(data);
+      t.process.write(chunk);
     } else {
-      t.process.stdin?.write(data);
+      t.process.stdin?.write(chunk);
     }
   });
 
   ipcMain.on('terminal:resize', (event: any, termId: string, cols: number, rows: number) => {
     const t = terminals.get(termId);
     if (!t || t.ownerId !== event.sender.id) return;
+    // Clamp to sane finite bounds — NaN/negative/huge values have undefined
+    // behavior in node-pty.
+    const c = Math.min(10000, Math.max(1, Math.floor(Number(cols) || 80)));
+    const r = Math.min(10000, Math.max(1, Math.floor(Number(rows) || 24)));
     if (t.isPty) {
-      try { t.process.resize(cols, rows); } catch (e) { console.error('Terminal resize error:', e); }
+      try { t.process.resize(c, r); } catch (e) { console.error('Terminal resize error:', e); }
     }
   });
 
