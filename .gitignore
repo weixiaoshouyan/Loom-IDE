@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+src/renderer/node_modules/
+
+# Build output
+dist/
+release/
+*.tsbuildinfo
+
+# Atomic-write temp files (crash leftovers)
+.loom-tmp*
+*.loom-tmp
+
+# Vite cache
+.vite/
+
+# Local tool metadata (Reasonix sessions/topics — not project content)
+.reasonix/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# cmd 误用 PowerShell 风格重定向产生的垃圾文件
+$null
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.local
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/

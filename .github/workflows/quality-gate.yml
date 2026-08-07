@@ -1,0 +1,45 @@
+name: Quality Gate
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+# Prevent a green CI from being bypassed: this job MUST pass before merge.
+jobs:
+  quality:
+    name: Lint + Typecheck + Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Installs ALL declared deps (eslint, @eslint/js, typescript-eslint,
+      # @vitest/coverage-v8, husky, lint-staged, …) so the gate is runnable.
+      - name: Install dependencies
+        run: npm ci
+
+      # tsc --noEmit (both configs) + eslint over main/agent/shared/renderer.
+      # Exits non-zero on any type error or lint ERROR (legacy `any` is a
+      # WARNING here so CI stays green while the backlog is cleaned).
+      - name: Lint & typecheck
+        run: npm run lint
+
+      # Runs the unit suite with coverage; fails if thresholds are unmet.
+      - name: Test (with coverage)
+        run: npm test -- --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14

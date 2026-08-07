@@ -1,0 +1,421 @@
+/**
+ * Loom IDE — main process entry.
+ *
+ * Responsibilities (and nothing else):
+ *   1. Create the main window.
+ *   2. Initialize singletons (AIEngine, PluginManager, MCPClient, SkillManager).
+ *   3. Wire up all IPC handler modules (each handles its own domain).
+ *   4. Manage app lifecycle (tray, auto-updater, cleanup on quit).
+ *
+ * All IPC handlers live in focused modules under src/main/*.ts. This file is
+ * purely orchestration — no handler logic should be added here.
+ */
+import './crash-handler';
+import { trace, clearTrace } from './startup-trace';
+clearTrace();
+trace('module-load-start');
+
+import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
+import { autoUpdater } from 'electron-updater';
+import path from 'path';
+import fs from 'fs';
+import http from 'http';
+import { AIEngine } from '../agent/ai-engine';
+import { PluginManager } from './plugin-manager';
+import { registerMarketplaceIPC } from './extension-marketplace';
+import { SkillManager } from '../agent/skills';
+import { MCPClient } from '../agent/mcp-client';
+import { buildCodeIndex, loadCodeIndex, saveCodeIndex, searchCodeIndex } from '../agent/code-index';
+import { CloudSyncManager } from './cloud-sync';
+import { telemetry } from './telemetry';
+import { DevelopmentCommandQueue } from '../agent/development-command';
+
+// ---- Handler modules (each registers its own IPC via setXxxSingletons) -------
+import { getUserData, getDataDir, getConfigPath, ensureDataDir, loadConfig, saveConfig } from './config';
+import { registerGitHandlers } from './git-handlers';
+import { setMainWindow, registerTerminalHandlers, killAllTerminals, getActiveTerminalsSnapshot } from './terminal-mgmt';
+import { registerFileHandlers } from './file-handlers';
+import { setMainWindowForWatcher, registerFileWatcherHandlers, stopFileWatcher } from './file-watcher';
+import { registerHistoryHandlers, stopHistoryCleanupTimer } from './history-handlers';
+import { registerDebugRuntimeHandlers } from './debug-runtime-handlers';
+import { setTerminalRuntimeGetter, setStreamRuntimeGetter, setPermissionRuntimeGetter, setPluginRuntimeGetter } from './runtime-state';
+import { registerConversationHandlers } from './conversations-handlers';
+import { registerSettingsHandlers, registerCodeIndexHandlers } from './settings-handlers';
+import { setMainWindowForDialog, registerDialogHandlers } from './dialog-handlers';
+import { registerShellHandlers, setPathPerms } from './shell-handlers';
+import { getPermissionSnapshot } from './path-permissions';
+import { setMainWindowForControls, registerWindowHandlers } from './window-handlers';
+import { setMainWindowForDebugger, registerDebuggerHandlers, killDebugger } from './debugger-handlers';
+import { registerFileIndexHandlers } from './file-index-handlers';
+import { registerAIHandlers, setAIStreamSingletons, abortAllStreams, getActiveStreamsSnapshot } from './ai-stream-handlers';
+import { registerAIConfigHandlers, setAIEngineForConfigHandlers } from './ai-config-handlers';
+import { registerSkillsHandlers, registerMcpHandlers, setSkillsMcpSingletons } from './skills-mcp-handlers';
+import { registerTeamHandlers, setCloudSyncForHandlers } from './team-handlers';
+import { registerTelemetryHandlers } from './telemetry-handlers';
+import { registerCliAgentHandlers } from './cli-agent-handlers';
+import { registerCommandPolicyHandlers } from './command-policy-handlers';
+import { setPluginSingletons, registerPluginHandlers } from './plugin-handlers';
+import { reloadCommandPolicy } from './command-policy';
+import { PathPermissionStore, setCurrentPermissionStore } from './path-permissions';
+
+// ====== Singletons ===========================================================
+let mainWindow: BrowserWindow | null = null;
+let aiEngine: AIEngine | null = null;
+let pluginManager: PluginManager | null = null;
+let skillManager: SkillManager | null = null;
+let mcpClient: MCPClient | null = null;
+const cloudSyncManager = new CloudSyncManager();
+const pathPermissions = new PathPermissionStore();
+const agentCommandQueue = new DevelopmentCommandQueue();
+
+// Expose command queue globally for handler modules.
+(global as any).__loom_mainWindow = null;
+(global as any).__loom_commandQueue = agentCommandQueue;
+
+// ====== Static File Server ===================================================
+let staticServer: http.Server | null = null;
+let staticServerPort = 5174;
+const STATIC_PORT_PREFERRED = 5174;
+
+async function waitForUrl(url: string, timeoutMs = 20000): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      if (resp.ok) return true;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+function startStaticServer(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let started = false;
+    const ROOT = path.join(__dirname, '../renderer');
+    const MIME: Record<string, string> = {
+      '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+      '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+      '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.woff': 'font/woff',
+      '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+    };
+    staticServer = http.createServer((req, res) => {
+      try {
+        const rawUrl = req.url === '/' ? '/index.html' : (req.url || '/').split('?')[0];
+        const safePath = decodeURIComponent(rawUrl).replace(/^[/\\]+/, '');
+        let filePath = path.resolve(ROOT, safePath);
+        const rootPath = path.resolve(ROOT);
+        if (!filePath.startsWith(rootPath + path.sep) && filePath !== rootPath) {
+          res.writeHead(403);
+          res.end('Forbidden');
+          return;
+        }
+        if (!fs.existsSync(filePath)) filePath = path.join(ROOT, 'index.html');
+        const ext = path.extname(filePath);
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+        fs.createReadStream(filePath).pipe(res);
+      } catch (e) {
+        res.writeHead(500);
+        res.end('Internal Server Error');
+      }
+    });
+    staticServer.on('error', (e: any) => {
+      if (e.code === 'EADDRINUSE') {
+        if (started) return;
+        const nextPort = staticServerPort + 1;
+        console.warn(`Port ${staticServerPort} in use, trying ${nextPort}`);
+        staticServerPort = nextPort;
+        staticServer!.listen(nextPort, '127.0.0.1', () => {
+          started = true;
+          console.log(`[Loom Static Server] http://localhost:${staticServerPort}`);
+          resolve(staticServerPort);
+        });
+      } else {
+        reject(e);
+      }
+    });
+    staticServer.listen(STATIC_PORT_PREFERRED, '127.0.0.1', () => {
+      started = true;
+      staticServerPort = STATIC_PORT_PREFERRED;
+      console.log(`[Loom Static Server] http://localhost:${staticServerPort}`);
+      resolve(staticServerPort);
+    });
+  });
+}
+
+// ====== Window ===============================================================
+function createWindow() {
+  const cfg = loadConfig();
+  const theme = cfg.theme || 'dark';
+  const ws = cfg.windowState;
+
+  mainWindow = new BrowserWindow({
+    width: ws?.width || 1400, height: ws?.height || 900,
+    x: ws?.x, y: ws?.y,
+    minWidth: 900, minHeight: 600,
+    title: 'Loom IDE',
+    icon: path.join(__dirname, '../../resources/icon.ico'),
+    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: theme === 'dark' ? '#3c3c3c' : '#f3f3f3',
+      symbolColor: theme === 'dark' ? '#cccccc' : '#333333',
+      height: 30,
+    },
+    show: false,
+    backgroundColor: theme === 'dark' ? '#1e1e1e' : '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  // Wire the new window into every handler module.
+  wireWindow(mainWindow);
+
+  if (ws?.maximized) mainWindow.maximize();
+
+  const isDev = process.env.NODE_ENV === 'development';
+  const loadUrl = isDev ? 'http://localhost:5174' : `http://localhost:${staticServerPort}`;
+
+  mainWindow.loadURL(loadUrl).catch((err) => {
+    console.error('Failed to load URL, retrying with file fallback:', err);
+    const fallbackPath = path.join(__dirname, '../renderer/index.html');
+    if (fs.existsSync(fallbackPath)) {
+      mainWindow?.loadFile(fallbackPath).catch(() => {
+        console.error('File fallback also failed');
+      });
+    }
+  });
+
+  if (isDev) mainWindow.webContents.openDevTools();
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow!.show();
+    mainWindow!.focus();
+  });
+
+  setTimeout(() => {
+    if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+      if (isDev) mainWindow.webContents.openDevTools();
+    }
+  }, 3000);
+
+  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
+
+  mainWindow.on('close', () => {
+    if (!mainWindow) return;
+    const isMax = mainWindow.isMaximized();
+    const bounds = mainWindow.getBounds();
+    const cfg = loadConfig();
+    cfg.windowState = { width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y, maximized: isMax };
+    saveConfig(cfg);
+  });
+}
+
+/**
+ * Wire the given BrowserWindow into every handler module that needs it.
+ * Called once from createWindow().
+ */
+function wireWindow(win: BrowserWindow) {
+  (global as any).__loom_mainWindow = win;
+
+  // Terminal / watcher / dialog / controls / debugger route output through mainWindow.
+  setMainWindow(win);
+  setMainWindowForWatcher(win);
+  setMainWindowForDialog(win);
+  setMainWindowForControls(win);
+  setMainWindowForDebugger(win);
+
+  // AI streaming modules share the same singleton set.
+  setAIStreamSingletons({
+    mainWindow: win,
+    aiEngine: aiEngine!,
+    mcpClient,
+    skillManager,
+    cloudSync: cloudSyncManager,
+    commandQueue: agentCommandQueue,
+  });
+}
+
+// =============================================================================
+//                              APP LIFECYCLE
+// =============================================================================
+let tray: Tray | null = null;
+
+app.on('ready', () => trace('app-ready-event'));
+app.on('will-quit', () => trace('will-quit'));
+app.on('quit', () => trace('quit'));
+
+app.whenReady().then(async () => {
+  trace('whenReady-resolved');
+  try {
+    ensureDataDir();
+    // Load the user-configurable command policy (falls back to defaults when app isn't ready).
+    reloadCommandPolicy();
+
+    // ---- Initialize singletons ----
+    const cfg = loadConfig();
+    skillManager = new SkillManager();
+    mcpClient = new MCPClient(cfg.mcpServers || undefined);
+    mcpClient.onUpdateConfig((servers) => {
+      const fullCfg = loadConfig();
+      fullCfg.mcpServers = servers;
+      saveConfig(fullCfg);
+    });
+    aiEngine = new AIEngine(cfg.aiConfig || undefined, skillManager, mcpClient);
+    aiEngine.onUpdateConfig((newAiCfg) => {
+      const fullCfg = loadConfig();
+      fullCfg.aiConfig = newAiCfg;
+      saveConfig(fullCfg);
+    });
+    pluginManager = new PluginManager();
+    pluginManager.onWebviewEvent((event) => {
+      mainWindow?.webContents.send('plugins:webview-event', event);
+    });
+
+    // ---- Push singletons into handler modules ----
+    setAIEngineForConfigHandlers(aiEngine);
+    setSkillsMcpSingletons(skillManager, mcpClient);
+    setCloudSyncForHandlers(cloudSyncManager);
+    setPathPerms(pathPermissions);
+    // Wire the shared PathPermissionStore into the module-level permission
+    // wrappers (grantRoot/canAccess/ensurePathAllowed/...) used by every
+    // handler. Without this, the store is never initialized and every
+    // permission check throws "PathPermissionStore not initialized", which
+    // breaks opening folders, file I/O, git, watchers, etc.
+    setCurrentPermissionStore(pathPermissions);
+    setPluginSingletons(null /* window set later in wireWindow */, pluginManager);
+
+    // ---- Register all IPC handlers ----
+    registerAIHandlers();
+    registerAIConfigHandlers();
+    registerGitHandlers();
+    registerTerminalHandlers();
+    registerFileHandlers();
+    registerFileWatcherHandlers();
+    registerHistoryHandlers();
+    registerConversationHandlers();
+    registerSettingsHandlers();
+    registerCodeIndexHandlers();
+    registerDialogHandlers();
+    registerShellHandlers();
+    registerWindowHandlers();
+    registerDebuggerHandlers();
+    registerFileIndexHandlers();
+    registerSkillsHandlers();
+    registerMcpHandlers();
+    registerTeamHandlers();
+    registerTelemetryHandlers();
+    registerCliAgentHandlers();
+    registerCommandPolicyHandlers();
+    registerPluginHandlers();
+    registerMarketplaceIPC();
+    registerDebugRuntimeHandlers();
+    trace('after-ipc-register');
+
+    // ---- Wire runtime-state snapshot getters ----
+    setTerminalRuntimeGetter(getActiveTerminalsSnapshot);
+    setStreamRuntimeGetter(getActiveStreamsSnapshot);
+    setPermissionRuntimeGetter(getPermissionSnapshot);
+    setPluginRuntimeGetter(() => pluginManager ? pluginManager.getAllPlugins().map((p) => ({
+      id: p.id, name: p.manifest.displayName || p.manifest.name, version: p.manifest.version, enabled: p.enabled,
+    })) : []);
+
+    // ---- Activate plugins ----
+    pluginManager.activateAll();
+
+    // ---- Start static server (prod) or wait for Vite (dev) ----
+    if (process.env.NODE_ENV === 'development') {
+      await waitForUrl('http://localhost:5174');
+    } else {
+      staticServerPort = await startStaticServer();
+    }
+
+    // ---- Create the window ----
+    createWindow();
+    trace('after-createWindow');
+
+    // ---- Auto updater ----
+    try {
+      autoUpdater.on('update-available', (info) => {
+        console.log('[AutoUpdater] Update available:', info.version);
+        mainWindow?.webContents.send('update:available', {
+          version: info.version,
+          releaseDate: info.releaseDate,
+        });
+      });
+      autoUpdater.on('error', (err) => {
+        console.warn('[AutoUpdater] Error:', err);
+      });
+      autoUpdater.checkForUpdates();
+    } catch (e) {
+      console.warn('Auto updater init failed (non-critical):', e);
+    }
+  } catch (e) {
+    console.error('App init failed:', e);
+    if (!mainWindow) {
+      staticServerPort = 5174;
+      createWindow();
+      trace('after-createWindow-fallback');
+    }
+  }
+
+  // ---- System tray (non-critical) ----
+  try {
+    const iconPath = path.join(__dirname, '../../resources/icon.ico');
+    if (fs.existsSync(iconPath)) {
+      const trayIcon = nativeImage.createFromPath(iconPath);
+      if (!trayIcon.isEmpty()) {
+        tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+        tray.setToolTip('Loom IDE');
+        const contextMenu = Menu.buildFromTemplate([
+          { label: '显示 Loom IDE', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+          { label: '退出', click: () => { app.quit(); } },
+        ]);
+        tray.setContextMenu(contextMenu);
+        tray.on('click', () => {
+          if (mainWindow) {
+            if (mainWindow.isVisible()) mainWindow.focus();
+            else { mainWindow.show(); mainWindow.focus(); }
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('Tray creation failed (non-critical):', e);
+  }
+});
+
+// ---- Global error capture ----
+process.on('uncaughtException', (error) => {
+  telemetry.captureException(error, { source: 'uncaughtException' });
+});
+process.on('unhandledRejection', (reason) => {
+  if (reason instanceof Error) telemetry.captureException(reason, { source: 'unhandledRejection' });
+});
+
+// ---- Cleanup on quit ----
+app.on('window-all-closed', () => {
+  trace('window-all-closed');
+  stopFileWatcher();
+  killAllTerminals();
+  killDebugger();
+  abortAllStreams();
+  stopHistoryCleanupTimer();
+  if (staticServer) { try { staticServer.close(); } catch {} }
+  if (tray) { try { tray.destroy(); } catch {} }
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+  if (!mainWindow) createWindow();
+});
+
+trace('module-load-end');

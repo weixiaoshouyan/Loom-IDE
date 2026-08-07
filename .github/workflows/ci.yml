@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  typecheck-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ---- Type-check both renderer (Vite) and main (CommonJS/tsc) ----
+      - name: Type-check (renderer + agent)
+        run: npx tsc -p config/tsconfig.json --noEmit
+
+      - name: Type-check (main process)
+        run: npx tsc -p config/tsconfig.main.json --noEmit
+
+      # ---- Unit tests ----
+      - name: Run unit tests
+        run: npx vitest run --root . src --config config/vite.config.ts
+
+      # ---- ESLint ----
+      # Keep the scope identical to `npm run lint` (quality-gate.yml) so the
+      # two workflows cannot drift: renderer is included.
+      - name: Run ESLint (main/agent/shared/renderer)
+        run: npx eslint --config config/eslint.config.mjs 'src/main/**/*.{ts,tsx}' 'src/agent/**/*.ts' 'src/shared/**/*.ts' 'src/renderer/**/*.{ts,tsx}'
+
+      # ---- Compile main process (needed by E2E) ----
+      - name: Build main process
+        run: npx tsc -p config/tsconfig.main.json
+
+      # ---- Production build (renderer) ----
+      - name: Build renderer
+        run: npx vite build --config config/vite.config.ts
+
+      # ---- End-to-end smoke tests (Electron + Playwright) ----
+      # Playwright downloads its own browser; we tell it to also use the
+      # system-installed Electron dist pointed at by node_modules.
+      - name: Run E2E smoke tests
+        run: npx playwright test tests/e2e/loom-smoke.spec.ts --config tests/e2e/playwright.config.ts

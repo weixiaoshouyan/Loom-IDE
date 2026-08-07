@@ -1,0 +1,64 @@
+// Pure markdown subset renderer used by the assistant panel.
+// Keep this dependency-free so tests can import it without mounting React/xterm.
+export function formatMarkdown(text: string): string {
+  if (!text) return '';
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_: string, lang: string, code: string) => {
+    const langLabel = lang || 'text';
+    const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const codeContent = escapedCode.trim();
+    const encodedCode = encodeURIComponent(code.trim());
+    let filePath = '';
+    const filePatterns = [
+      /\/\/\s*File:\s*(.+)/,
+      /\/\*\s*File:\s*(.+?)\s*\*\//,
+      /#\s*File:\s*(.+)/,
+    ];
+    for (const pat of filePatterns) {
+      const m = code.match(pat);
+      if (m) { filePath = m[1].trim(); break; }
+    }
+    const safeFilePath = safeAttr(filePath);
+    const fileName = filePath.split(/[\\/]/).pop();
+    return `<details class="code-block-wrapper" data-code="${encodedCode}" data-lang="${safeAttr(langLabel)}"${filePath ? ` data-file="${safeFilePath}"` : ''} open>
+      <summary class="code-block-header">
+        <span class="code-collapse-indicator">▶</span>
+        <span class="code-lang">${safeAttr(langLabel)}</span>
+        ${filePath ? `<span class="code-file-tag" title="${safeFilePath}">${safeAttr(fileName || filePath)}</span>` : ''}
+        <button class="code-copy-btn" data-action="copy" title="Copy code">Copy</button>
+        <button class="code-apply-btn" data-action="apply" title="${filePath ? `Apply this code to ${safeFilePath}` : 'Apply this code to active file'}">Apply</button>
+      </summary>
+      <pre class="code-block"><code>${codeContent}</code></pre>
+    </details>`;
+  });
+
+  html = html.replace(/`([^\n`]+)`/g, '<code class="inline-code">$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, (m) => {
+    if (!isSafeHref(m)) return m;
+    return `<a href="${safeAttr(m)}" target="_blank" rel="noopener noreferrer">${safeAttr(m)}</a>`;
+  });
+  html = html.replace(/(href|src)=(["']?)(javascript|data|vbscript):[^"'\s>]*/gi, '$1=$2about:blank#blocked');
+
+  html = html.split('\n\n').map(p => {
+    const trimmed = p.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('<details class="code-block-wrapper"')) return trimmed;
+    return '<p>' + trimmed.replace(/\n/g, '<br/>') + '</p>';
+  }).join('');
+
+  return html;
+}
+
+function isSafeHref(url: string): boolean {
+  const trimmed = url.trim().toLowerCase();
+  if (!trimmed) return false;
+  return /^(https?:\/\/|mailto:|\/|#)/i.test(trimmed);
+}
+
+function safeAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
