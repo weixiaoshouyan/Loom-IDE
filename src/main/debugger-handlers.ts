@@ -10,14 +10,21 @@ import path from 'path';
 import { canAccess } from './path-permissions';
 
 // Set by index.ts.
-let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean } } | null = null;
+let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean }; isDestroyed: () => boolean } | null = null;
 export function setMainWindowForDebugger(w: any) { resolvedMainWindow = w; }
 
 let debugProcess: ChildProcess | null = null;
 
 function sendToRenderer(channel: string, ...args: any[]) {
-  const wc = resolvedMainWindow?.webContents;
-  if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  try {
+    const win = resolvedMainWindow;
+    if (!win) return;
+    // Window may be destroyed while a debug process is emitting output —
+    // reading `.webContents` on a destroyed BrowserWindow throws.
+    if (typeof win.isDestroyed === 'function' && win.isDestroyed()) return;
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* window destroyed mid-send — drop the event */ }
 }
 
 function getDebugCommand(scriptPath: string, cwd: string): { cmd: string; args: string[]; port?: number } {

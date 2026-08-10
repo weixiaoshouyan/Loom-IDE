@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { t } from '@/shared/i18n';
+import DiffViewModal from './DiffViewModal';
 
-export default function SidebarGitView({ workspacePath, locale }: { workspacePath: string; locale?: 'zh-CN' | 'en-US' }) {
+export default function SidebarGitView({ workspacePath, onOpenFile, locale }: {
+  workspacePath: string;
+  onOpenFile?: (path: string, content: string) => void;
+  locale?: 'zh-CN' | 'en-US';
+}) {
   const [branches, setBranches] = useState<string[]>([]);
   const [currentBranch, setCurrentBranch] = useState('');
   const [changes, setChanges] = useState<{ status: string; file: string }[]>([]);
@@ -9,6 +15,38 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
   const [gitLog, setGitLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
+  const [diffTarget, setDiffTarget] = useState<{ file: string; original: string; modified: string } | null>(null);
+  const [diffLoading, setDiffLoading] = useState<string | null>(null);
+
+  // 点击变更项：打开文件并跳转到改动处（首次打开先落到第 1 行）
+  const openChange = useCallback(async (file: string) => {
+    if (!onOpenFile || !workspacePath) return;
+    try {
+      const abs = file.startsWith(workspacePath) ? file : workspacePath.replace(/[\\/]+$/, '') + '/' + file;
+      const content = await window.loom.fs.readFile(abs);
+      if (typeof content === 'string' && !content.startsWith('__ERR__:')) {
+        onOpenFile(abs, content);
+        window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line: 1 } }));
+      }
+    } catch { /* file may have been deleted */ }
+  }, [onOpenFile, workspacePath]);
+
+  // 打开 diff 视图：HEAD/索引版本 vs 工作区内容
+  const openDiff = useCallback(async (file: string) => {
+    if (!workspacePath) return;
+    setDiffLoading(file);
+    try {
+      const abs = file.startsWith(workspacePath) ? file : workspacePath.replace(/[\\/]+$/, '') + '/' + file;
+      const [original, modified] = await Promise.all([
+        window.loom.git?.show?.(workspacePath, file).catch(() => ''),
+        window.loom.fs.readFile(abs).catch(() => ''),
+      ]);
+      const orig = typeof original === 'string' && !original.startsWith('__ERR__') ? original : '';
+      const mod = typeof modified === 'string' && !modified.startsWith('__ERR__') ? modified : '';
+      setDiffTarget({ file, original: orig, modified: mod });
+    } catch { /* ignore */ }
+    setDiffLoading(null);
+  }, [workspacePath]);
 
   // Split changes into staged and unstaged based on git status codes
   const stagedChanges = changes.filter(c => {
@@ -46,7 +84,7 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
   const unstage = async (file: string) => { await window.loom.git?.unstage?.(workspacePath, file); refresh(); };
   const commit = async () => {
     if (!commitMsg.trim()) return;
-    setActionMsg(locale === 'zh-CN' ? '正在提交...' : 'Committing...');
+    setActionMsg(t('git.committing'));
     try {
       await window.loom.git?.commit?.(workspacePath, commitMsg);
       setCommitMsg('');
@@ -56,26 +94,26 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
     }
   };
   const pull = async () => {
-    setActionMsg(locale === 'zh-CN' ? '正在拉取...' : 'Pulling...');
+    setActionMsg(t('git.pulling'));
     try {
       const r = await window.loom.git?.pull?.(workspacePath);
-      setActionMsg(typeof r === 'string' && r.includes('Already up to date') ? (locale === 'zh-CN' ? '已是最新' : 'Up to date') : String(r).substring(0, 200) || (locale === 'zh-CN' ? '完成' : 'Done'));
-    } catch (e: any) { setActionMsg('Error: ' + e.message); }
+      setActionMsg(typeof r === 'string' && r.includes('Already up to date') ? t('git.upToDate') : String(r).substring(0, 200) || t('git.pullDone'));
+    } catch (e: any) { setActionMsg(t('git.error') + e.message); }
     setTimeout(() => setActionMsg(''), 3000);
     refresh();
   };
   const push = async () => {
-    setActionMsg(locale === 'zh-CN' ? '正在推送...' : 'Pushing...');
+    setActionMsg(t('git.pushing'));
     try {
       const r = await window.loom.git?.push?.(workspacePath);
-      setActionMsg(typeof r === 'string' && r.includes('Everything up-to-date') ? (locale === 'zh-CN' ? '已是最新' : 'Up to date') : String(r).substring(0, 200) || (locale === 'zh-CN' ? '完成' : 'Done'));
-    } catch (e: any) { setActionMsg('Error: ' + e.message); }
+      setActionMsg(typeof r === 'string' && r.includes('Everything up-to-date') ? t('git.upToDate') : String(r).substring(0, 200) || t('git.pushDone'));
+    } catch (e: any) { setActionMsg(t('git.error') + e.message); }
     setTimeout(() => setActionMsg(''), 3000);
     refresh();
   };
   const switchBranch = async (branch: string) => {
     if (branch === currentBranch) return;
-    setActionMsg(locale === 'zh-CN' ? `切换到 ${branch}...` : `Switching to ${branch}...`);
+    setActionMsg(t('git.switchToBranch', { branch }));
     await window.loom.git?.checkout?.(workspacePath, branch);
     setActionMsg('');
     refresh();
@@ -86,11 +124,32 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
     'M': 'var(--yellow)', 'A': 'var(--green)', 'D': 'var(--red)',
     'U': 'var(--orange)', '?': 'var(--text-muted)', 'R': 'var(--cyan)',
   };
+
+  const renderChangeItem = (c: { status: string; file: string }, key: string, stageAction: (file: string) => void, stageTitle: string) => (
+    <div key={key} className="tree-item" style={{ paddingLeft: 4, gap: 4, fontSize: 12, cursor: 'pointer' }} title={c.file} onClick={() => openChange(c.file)}>
+      <span style={{ width: 16, textAlign: 'center', color: statusColors[c.status] || 'var(--text-muted)', fontSize: 10, flexShrink: 0, fontWeight: 700 }}>
+        {c.status}
+      </span>
+      <span className="tree-item-name" style={{ fontSize: 12 }}>{c.file.split(/[\\/]/).pop()}</span>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }} onClick={e => e.stopPropagation()}>
+        {diffLoading === c.file
+          ? <span style={{ fontSize: 10, color: 'var(--text-muted)', padding: '0 4px' }}>…</span>
+          : (
+            <button className="sidebar-header-btn" title={t('git.viewDiff')} onClick={() => openDiff(c.file)}>
+              <svg viewBox="0 0 16 16" width="12" height="12"><path d="M1 4l4-2v10l-4 2V4zm5-2l4 2v10l-4-2V2zm5 2l4-2v10l-4 2V4z" fill="currentColor" /></svg>
+            </button>
+          )}
+        <button className="sidebar-header-btn" title={stageTitle} onClick={() => stageAction(c.file)}>
+          <svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 8l4 4 8-8" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg>
+        </button>
+      </div>
+    </div>
+  );
   return (
     <>
       <div className="sidebar-header">
-        <span>{locale === 'zh-CN' ? '源码管理' : 'SOURCE CONTROL'}</span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'none' }}>{changes.length} {locale === 'zh-CN' ? '更改' : 'changes'}</span>
+        <span>{t('git.title')}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'none' }}>{changes.length} {t('git.changes')}</span>
       </div>
       <div className="sidebar-content">
         {workspacePath ? (
@@ -98,14 +157,14 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
             <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
               <button className="settings-btn-sm" onClick={pull} title="Git Pull">
                 <svg viewBox="0 0 16 16" width="12" height="12" style={{ marginRight: 4 }}><path d="M8 1v10M4 7l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg>
-                {locale === 'zh-CN' ? '拉取' : 'Pull'}
+                {t('git.pull')}
               </button>
               <button className="settings-btn-sm" onClick={push} title="Git Push">
                 <svg viewBox="0 0 16 16" width="12" height="12" style={{ marginRight: 4 }}><path d="M8 14V4M4 9l4-4 4 4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg>
-                {locale === 'zh-CN' ? '推送' : 'Push'}
+                {t('git.push')}
               </button>
               <button className={`settings-btn-sm ${showLog ? 'active' : ''}`} onClick={() => setShowLog(!showLog)} style={{ marginLeft: 'auto' }}>
-                {locale === 'zh-CN' ? '历史' : 'Log'}
+                {t('git.history')}
               </button>
             </div>
 
@@ -129,12 +188,12 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
               <input
                 className="search-input"
                 style={{ flex: 1, height: 26 }}
-                placeholder={locale === 'zh-CN' ? '提交说明 (Ctrl+Enter 提交)' : 'Message (Ctrl+Enter to commit)'}
+                placeholder={t('git.commitPlaceholder')}
                 value={commitMsg}
                 onChange={e => setCommitMsg(e.target.value)}
                 onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') commit(); }}
               />
-              <button className="settings-btn-sm primary" onClick={commit} disabled={!commitMsg.trim() || stagedChanges.length === 0}>{locale === 'zh-CN' ? '提交' : 'Commit'}</button>
+              <button className="settings-btn-sm primary" onClick={commit} disabled={!commitMsg.trim() || stagedChanges.length === 0}>{t('git.commit')}</button>
             </div>
 
             {currentBranch && (
@@ -144,11 +203,11 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
               </div>
             )}
 
-            {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: 4 }}>{locale === 'zh-CN' ? '正在加载...' : 'Loading...'}</div>}
+            {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: 4 }}>{t('git.loading')}</div>}
             {!loading && changes.length === 0 && (
               <div className="panel-empty-state">
-                <div>{workspacePath ? (locale === 'zh-CN' ? '没有更改' : 'No changes detected') : (locale === 'zh-CN' ? '未找到 Git 仓库' : 'No repository found')}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{workspacePath ? (locale === 'zh-CN' ? '工作区干净' : 'Working tree clean') : (locale === 'zh-CN' ? '请打开已初始化 Git 的文件夹' : 'Open a folder with git initialized')}</div>
+                <div>{workspacePath ? t('git.noChanges') : t('git.noRepo')}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{workspacePath ? t('git.cleanWorkingTree') : t('git.noRepoHint')}</div>
               </div>
             )}
 
@@ -156,24 +215,12 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
             {stagedChanges.length > 0 && (
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>{locale === 'zh-CN' ? '已暂存的更改' : 'Staged Changes'} ({stagedChanges.length})</span>
+                  <span>{t('git.stagedChanges')} ({stagedChanges.length})</span>
                   <button className="settings-btn-sm" style={{ fontSize: 10, padding: '1px 6px' }} onClick={async () => {
                     for (const c of stagedChanges) await unstage(c.file);
-                  }}>{locale === 'zh-CN' ? '全部取消暂存' : 'Unstage All'}</button>
+                  }}>{t('git.unstageAll')}</button>
                 </div>
-                {stagedChanges.map((c, i) => (
-                  <div key={'s' + i} className="tree-item" style={{ paddingLeft: 4, gap: 4, fontSize: 12 }} title={c.file}>
-                    <span style={{ width: 16, textAlign: 'center', color: statusColors[c.status] || 'var(--text-muted)', fontSize: 10, flexShrink: 0, fontWeight: 700 }}>
-                      {c.status}
-                    </span>
-                    <span className="tree-item-name" style={{ fontSize: 12 }}>{c.file.split(/[\\/]/).pop()}</span>
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-                      <button className="sidebar-header-btn" title={locale === 'zh-CN' ? '取消暂存' : 'Unstage'} onClick={() => unstage(c.file)}>
-                        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 8l4-4 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                {stagedChanges.map((c, i) => renderChangeItem(c, 's' + i, unstage, t('git.unstage')))}
               </div>
             )}
 
@@ -181,47 +228,23 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
             {unstagedChanges.length > 0 && (
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>{locale === 'zh-CN' ? '更改' : 'Changes'} ({unstagedChanges.length})</span>
+                  <span>{t('git.changes')} ({unstagedChanges.length})</span>
                   <button className="settings-btn-sm" style={{ fontSize: 10, padding: '1px 6px' }} onClick={async () => {
                     for (const c of unstagedChanges) await stage(c.file);
-                  }}>{locale === 'zh-CN' ? '全部暂存' : 'Stage All'}</button>
+                  }}>{t('git.stageAll')}</button>
                 </div>
-                {unstagedChanges.map((c, i) => (
-                  <div key={'u' + i} className="tree-item" style={{ paddingLeft: 4, gap: 4, fontSize: 12 }} title={c.file}>
-                    <span style={{ width: 16, textAlign: 'center', color: statusColors[c.status] || 'var(--text-muted)', fontSize: 10, flexShrink: 0, fontWeight: 700 }}>
-                      {c.status}
-                    </span>
-                    <span className="tree-item-name" style={{ fontSize: 12 }}>{c.file.split(/[\\/]/).pop()}</span>
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-                      <button className="sidebar-header-btn" title={locale === 'zh-CN' ? '暂存' : 'Stage'} onClick={() => stage(c.file)}>
-                        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 8l4 4 8-8" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                {unstagedChanges.map((c, i) => renderChangeItem(c, 'u' + i, stage, t('git.stage')))}
               </div>
             )}
 
             {/* All changes (fallback when no staged/unstaged separation works) */}
             {stagedChanges.length === 0 && unstagedChanges.length === 0 && changes.length > 0 && (
-              changes.map((c, i) => (
-                <div key={i} className="tree-item" style={{ paddingLeft: 4, gap: 4, fontSize: 12 }} title={c.file}>
-                  <span style={{ width: 16, textAlign: 'center', color: statusColors[c.status] || 'var(--text-muted)', fontSize: 10, flexShrink: 0, fontWeight: 700 }}>
-                    {c.status}
-                  </span>
-                  <span className="tree-item-name" style={{ fontSize: 12 }}>{c.file.split(/[\\/]/).pop()}</span>
-                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-                    <button className="sidebar-header-btn" title={locale === 'zh-CN' ? '暂存' : 'Stage'} onClick={() => stage(c.file)}>
-                      <svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 8l4 4 8-8" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg>
-                    </button>
-                  </div>
-                </div>
-              ))
+              changes.map((c, i) => renderChangeItem(c, String(i), stage, t('git.stage')))
             )}
 
             {branches.length > 0 && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase' }}>{locale === 'zh-CN' ? '分支' : 'Branches'}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase' }}>{t('git.branch')}</div>
                 {branches.map(b => (
                   <div key={b} className="tree-item" style={{ paddingLeft: 8, fontSize: 12, color: b === currentBranch ? 'var(--accent)' : 'var(--text-primary)', gap: 6 }}
                     onClick={() => switchBranch(b)}>
@@ -234,9 +257,17 @@ export default function SidebarGitView({ workspacePath, locale }: { workspacePat
             )}
           </div>
         ) : (
-          <div className="tree-empty">{locale === 'zh-CN' ? '未注册源码控制提供商' : 'No source control providers registered'}</div>
+          <div className="tree-empty">{t('git.noProvider')}</div>
         )}
       </div>
+      {diffTarget && (
+        <DiffViewModal
+          fileName={diffTarget.file}
+          original={diffTarget.original}
+          modified={diffTarget.modified}
+          onClose={() => setDiffTarget(null)}
+        />
+      )}
     </>
   );
 }

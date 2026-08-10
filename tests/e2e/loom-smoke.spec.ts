@@ -23,11 +23,12 @@ test.describe('Loom IDE boot', () => {
     ctx = await launchLoom();
 
     // The welcome page is the default landing surface when no folder is open.
-    await expect(ctx.firstWindow.locator('.welcome-action')).toBeVisible();
+    await expect(ctx.firstWindow.locator('.welcome-action').first()).toBeVisible();
 
-    // Primary action buttons render (New File, Open File, Open Folder).
+    // Primary action buttons render (New File, Open File, Open Folder,
+    // Open Settings).
     const actionButtons = ctx.firstWindow.locator('.welcome-action');
-    await expect(actionButtons).toHaveCount(3);
+    await expect(actionButtons).toHaveCount(4);
   });
 
   test('AI status chip renders', async () => {
@@ -60,6 +61,6 @@ test.describe('Loom IDE boot', () => {
     }, bounds as any);
 
     // After resize the welcome actions should still be present.
-    await expect(ctx.firstWindow.locator('.welcome-action')).toBeVisible();
+    await expect(ctx.firstWindow.locator('.welcome-action').first()).toBeVisible();
   });
 });

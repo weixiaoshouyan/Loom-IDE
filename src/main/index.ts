@@ -42,7 +42,7 @@ import { setTerminalRuntimeGetter, setStreamRuntimeGetter, setPermissionRuntimeG
 import { registerConversationHandlers } from './conversations-handlers';
 import { registerSettingsHandlers, registerCodeIndexHandlers } from './settings-handlers';
 import { setMainWindowForDialog, registerDialogHandlers } from './dialog-handlers';
-import { registerShellHandlers, setPathPerms } from './shell-handlers';
+import { registerShellHandlers, setPathPerms, setShellMainWindow, killAllRuns } from './shell-handlers';
 import { getPermissionSnapshot } from './path-permissions';
 import { setMainWindowForControls, registerWindowHandlers } from './window-handlers';
 import { setMainWindowForDebugger, registerDebuggerHandlers, killDebugger } from './debugger-handlers';
@@ -212,11 +212,20 @@ function createWindow() {
 
   mainWindow.loadURL(loadUrl).catch((err) => {
     console.error('Failed to load URL, retrying with file fallback:', err);
-    const fallbackPath = path.join(__dirname, '../renderer/index.html');
-    if (fs.existsSync(fallbackPath)) {
-      mainWindow?.loadFile(fallbackPath).catch(() => {
-        console.error('File fallback also failed');
-      });
+    // The window may be closed while loadURL is in flight. Accessing a
+    // destroyed window throws — and loadFile itself can throw SYNCHRONOUSLY
+    // (not just reject) when the window dies between the guard and the call,
+    // so the whole fallback is wrapped in try/catch.
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const fallbackPath = path.join(__dirname, '../renderer/index.html');
+      if (fs.existsSync(fallbackPath)) {
+        mainWindow.loadFile(fallbackPath).catch(() => {
+          console.error('File fallback also failed');
+        });
+      }
+    } catch (e) {
+      console.error('Window destroyed during fallback load:', e);
     }
   });
 
@@ -237,7 +246,30 @@ function createWindow() {
     }
   }, 3000);
 
-  mainWindow.on('closed', () => { mainWindow = null; });
+  // CRITICAL: the window is gone — every handler module still holds a
+  // reference to this BrowserWindow. Accessing a destroyed window's
+  // `.webContents` (or calling its methods) throws "Object has been
+  // destroyed", which previously flooded the audit log via uncaughtException
+  // (node-pty onData callbacks firing after close are the common trigger).
+  // Null out every module reference so their send helpers become no-ops.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    (global as any).__loom_mainWindow = null;
+    setMainWindow(null);
+    setMainWindowForWatcher(null);
+    setMainWindowForDialog(null);
+    setMainWindowForControls(null);
+    setMainWindowForDebugger(null);
+    setShellMainWindow(null);
+    setAIStreamSingletons({
+      mainWindow: null,
+      aiEngine: aiEngine!,
+      mcpClient,
+      skillManager,
+      cloudSync: cloudSyncManager,
+      commandQueue: agentCommandQueue,
+    });
+  });
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false));
 
@@ -264,6 +296,7 @@ function wireWindow(win: BrowserWindow) {
   setMainWindowForDialog(win);
   setMainWindowForControls(win);
   setMainWindowForDebugger(win);
+  setShellMainWindow(win.webContents);
 
   // AI streaming modules share the same singleton set.
   setAIStreamSingletons({
@@ -447,6 +480,7 @@ app.on('window-all-closed', () => {
   killAllTerminals();
   killDebugger();
   abortAllStreams();
+  killAllRuns();
   stopHistoryCleanupTimer();
   if (staticServer) { try { staticServer.close(); } catch {} }
   if (tray) { try { tray.destroy(); } catch {} }

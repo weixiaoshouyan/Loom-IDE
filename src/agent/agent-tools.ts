@@ -7,7 +7,10 @@
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
+// 权限边界单一事实源：agent 工具与 IPC handler 共用主进程的 PathPermissionStore。
+// 存储未初始化时（单元测试）回退到 workspacePath 词法检查（见 isSafePath）。
+import { canAccess as storeCanAccess, hasGrants as storeHasGrants } from '../main/path-permissions';
 import type { CodeSymbol } from './code-index';
 import type { Scratchpad } from './scratchpad';
 import type { AgentStateSnapshot } from './agent-state-machine';
@@ -436,6 +439,12 @@ export interface ToolExecutionContext {
   /** autoApplyFileWrites 由 codex 主流程使用，代表任务已通过 plan review，可直接落盘 */
   autoApplyFileWrites?: boolean;
   onFilePreview?: (filePath: string, content: string, existed: boolean, originalContent: string) => void;
+  /**
+   * Real user approval gate for destructive operations (delete_file /
+   * rename_file). When set, the tool BLOCKS until the user approves or
+   * rejects — the model can no longer self-confirm destructive actions.
+   */
+  onDestructiveApproval?: (request: { type: 'delete' | 'rename'; filePath: string; newPath?: string }) => Promise<boolean>;
   skills?: { id: string; name: string; description: string }[];
   mcpServers?: { id: string; name: string; tools: { name: string; description: string }[] }[];
   onCallMcpTool?: (serverId: string, toolName: string, args: Record<string, any>) => Promise<any>;
@@ -492,6 +501,14 @@ function isPathInside(parent: string, child: string): boolean {
 }
 
 function isSafePath(filePath: string, workspacePath: string): boolean {
+  // 首选：主进程 PathPermissionStore —— 以用户真正授权的根目录为边界
+  // （含 realpath 双重校验、symlink 逃逸防护、非存在路径的祖先回溯）。
+  // 这是唯一在线的权限判定；renderer 传入的 workspacePath 仅用于相对路径解析。
+  // 存储尚未初始化或没有任何授权时（单元测试 / 冷启动），回退到 workspacePath
+  // 词法 + realpath 检查，保持与旧行为一致。
+  try {
+    if (storeHasGrants()) return storeCanAccess(filePath);
+  } catch { /* 存储未初始化 → 回退 */ }
   const resolved = path.resolve(filePath);
   const normalizedWorkspace = path.resolve(workspacePath);
   // 第一关：词法路径必须在工作区内。
@@ -597,9 +614,9 @@ export async function executeToolCall(
       case 'create_directory':
         return executeCreateDirectory(args, context);
       case 'delete_file':
-        return executeDeleteFile(args, context);
+        return await executeDeleteFile(args, context);
       case 'rename_file':
-        return executeRenameFile(args, context);
+        return await executeRenameFile(args, context);
       case 'git_status':
         return await executeGitStatus(context);
       case 'git_diff':
@@ -1202,7 +1219,67 @@ function executeRestoreCheckpoint(args: any, context: ToolExecutionContext): str
   }
 }
 
-function executeGetDiagnostics(args: any, context: ToolExecutionContext): string {
+/**
+ * Resolve the workspace-local TypeScript checker (node_modules/typescript/bin/tsc).
+ * Returns null when TypeScript isn't installed locally — we never fall back to
+ * npx, because that would silently download-and-execute from the registry.
+ */
+function resolveLocalTsc(ws: string): string | null {
+  const candidates = [
+    path.join(ws, 'node_modules', 'typescript', 'bin', 'tsc'),
+    path.join(ws, 'node_modules', 'typescript', 'lib', 'tsc.js'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Run `tsc --noEmit` asynchronously (never spawnSync — a long type-check must
+ * not freeze the main process event loop for up to a minute). Runs the checker
+ * with the app's own bundled Node runtime (ELECTRON_RUN_AS_NODE) so we don't
+ * depend on `node` being on PATH and never touch the network.
+ */
+function runTscCheck(ws: string, timeoutMs = 120000): Promise<{ ok: boolean; output: string; error?: string }> {
+  return new Promise((resolve) => {
+    const tscEntry = resolveLocalTsc(ws);
+    if (!tscEntry) {
+      resolve({
+        ok: false,
+        output: '',
+        error: 'TypeScript is not installed in this workspace (node_modules/typescript missing). Install it locally, or run the project\'s own linter via run_command.',
+      });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (payload: { ok: boolean; output: string; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(payload);
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    const child = spawn(process.execPath, [tscEntry, '--noEmit', '--pretty'], {
+      cwd: ws,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      windowsHide: true,
+      shell: false,
+    });
+    timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish({ ok: false, output: stdout + stderr, error: `tsc timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
+    child.on('error', (err: Error) => finish({ ok: false, output: '', error: err.message }));
+    child.on('close', (code) => finish({ ok: code === 0, output: stdout + stderr }));
+  });
+}
+
+async function executeGetDiagnostics(args: any, context: ToolExecutionContext): Promise<string> {
   // Honest implementation: `context.diagnostics` is never populated anywhere,
   // so the old version always reported "code is clean ✨" — actively misleading.
   // Run the real TypeScript checker instead (same as read_lints), filtered by file.
@@ -1211,34 +1288,23 @@ function executeGetDiagnostics(args: any, context: ToolExecutionContext): string
   if (!fs.existsSync(path.join(ws, 'tsconfig.json'))) {
     return 'No tsconfig.json found in this workspace; TypeScript static diagnostics are unavailable. Use read_lints for configured checks, or run_command with the project\'s linter.';
   }
-  try {
-    const tscResult = spawnSync('npx', ['tsc', '--noEmit', '--pretty'], {
-      cwd: ws,
-      encoding: 'utf-8',
-      timeout: 60000,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-      shell: false,
-    });
-    let output = (tscResult.stdout || '') + (tscResult.stderr || '');
-    if (!output || output.includes('No inputs were found')) {
-      return 'TypeScript check passed — no diagnostics.';
-    }
-    const filePath = args.filePath;
-    if (filePath) {
-      const norm = String(filePath).replace(/\\/g, '/');
-      const lines = output.split('\n').filter(l => l.includes(norm));
-      if (lines.length === 0) return `TypeScript check passed — no diagnostics for ${filePath}.`;
-      output = lines.join('\n');
-    }
-    return output.substring(0, 5000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 工具层异常处理，返回给模型阅读
-  } catch (e: any) {
-    return `Diagnostics error: ${e.message || 'Unknown error'}`;
+  const result = await runTscCheck(ws);
+  if (result.error) return `Diagnostics unavailable: ${result.error}`;
+  let output = result.output;
+  if (!output || output.includes('No inputs were found')) {
+    return 'TypeScript check passed — no diagnostics.';
   }
+  const filePath = args.filePath;
+  if (filePath) {
+    const norm = String(filePath).replace(/\\/g, '/');
+    const lines = output.split('\n').filter(l => l.includes(norm));
+    if (lines.length === 0) return `TypeScript check passed — no diagnostics for ${filePath}.`;
+    output = lines.join('\n');
+  }
+  return output.substring(0, 5000);
 }
 
-function executeReadLints(args: any, context: ToolExecutionContext): string {
+async function executeReadLints(args: any, context: ToolExecutionContext): Promise<string> {
   const targetPath = args.paths ? resolvePath(args.paths, context.workspacePath) : context.workspacePath;
 
   if (!fs.existsSync(targetPath)) {
@@ -1250,15 +1316,9 @@ function executeReadLints(args: any, context: ToolExecutionContext): string {
     let result = '';
     // Check if there's a tsconfig.json
     if (fs.existsSync(path.join(context.workspacePath, 'tsconfig.json'))) {
-      const tscResult = spawnSync('npx', ['tsc', '--noEmit', '--pretty'], {
-        cwd: context.workspacePath,
-        encoding: 'utf-8',
-        timeout: 60000,
-        maxBuffer: 1024 * 1024,
-        windowsHide: true,
-        shell: false,
-      });
-      result = (tscResult.stdout || '') + (tscResult.stderr || '');
+      const tscResult = await runTscCheck(context.workspacePath);
+      if (tscResult.error) return `Lint unavailable: ${tscResult.error}`;
+      result = tscResult.output;
     }
     if (!result || result.includes('No inputs were found')) {
       return 'No linter configuration found or no issues detected.';
@@ -1288,7 +1348,7 @@ function executeCreateDirectory(args: any, context: ToolExecutionContext): strin
   }
 }
 
-function executeDeleteFile(args: any, context: ToolExecutionContext): string {
+async function executeDeleteFile(args: any, context: ToolExecutionContext): Promise<string> {
   const filePath = resolvePath(args.filePath, context.workspacePath);
 
   if (!isSafePath(filePath, context.workspacePath)) {
@@ -1303,9 +1363,17 @@ function executeDeleteFile(args: any, context: ToolExecutionContext): string {
     return `Error: Path not found: ${filePath}`;
   }
 
-  // 破坏性操作需要人工确认（autoApplyFileWrites / confirm 才真正执行）
+  // 破坏性操作需要真实的人工确认。当审批回调存在时（agent 主流程），模型
+  // 不能再通过 confirm:true 自证；工具会阻塞等待用户在 UI 上确认/拒绝。
   if (!destructiveAllowed(args, context)) {
-    return `Proposed delete of ${filePath}. This is destructive — re-issue the call with confirm: true to apply.`;
+    if (context.onDestructiveApproval) {
+      const approved = await context.onDestructiveApproval({ type: 'delete', filePath });
+      if (!approved) {
+        return `User rejected the delete of ${filePath}. Do not retry unless the user asks again.`;
+      }
+    } else {
+      return `Proposed delete of ${filePath}. This is destructive — re-issue the call with confirm: true to apply.`;
+    }
   }
 
   try {
@@ -1322,7 +1390,7 @@ function executeDeleteFile(args: any, context: ToolExecutionContext): string {
   }
 }
 
-function executeRenameFile(args: any, context: ToolExecutionContext): string {
+async function executeRenameFile(args: any, context: ToolExecutionContext): Promise<string> {
   const oldPath = resolvePath(args.oldPath, context.workspacePath);
   const newPath = resolvePath(args.newPath, context.workspacePath);
 
@@ -1343,7 +1411,14 @@ function executeRenameFile(args: any, context: ToolExecutionContext): string {
   }
 
   if (!destructiveAllowed(args, context)) {
-    return `Proposed rename of ${oldPath} to ${newPath}. This is destructive — re-issue the call with confirm: true to apply.`;
+    if (context.onDestructiveApproval) {
+      const approved = await context.onDestructiveApproval({ type: 'rename', filePath: oldPath, newPath });
+      if (!approved) {
+        return `User rejected the rename of ${oldPath} to ${newPath}. Do not retry unless the user asks again.`;
+      }
+    } else {
+      return `Proposed rename of ${oldPath} to ${newPath}. This is destructive — re-issue the call with confirm: true to apply.`;
+    }
   }
 
   try {
@@ -1816,7 +1891,8 @@ async function executeRunTestAt(args: any, context: ToolExecutionContext): Promi
       cmdArgs = ['vitest', 'run', testPath];
   }
 
-  // Run via onRunCommand if available, else use spawnSync directly
+  // Run via onRunCommand if available; the fallback is an async spawn (never
+  // spawnSync — a 180s test run must not freeze the main process event loop).
   try {
     const runCommand = context.onRunCommand;
     if (runCommand) {
@@ -1833,16 +1909,31 @@ async function executeRunTestAt(args: any, context: ToolExecutionContext): Promi
       const output = `${result.stdout}\n${result.stderr}`.trim();
       return output.substring(0, 8000) || 'Tests completed (no output)';
     }
-    // Fallback: spawnSync
-    const result = spawnSync(command, cmdArgs, {
-      cwd: context.workspacePath,
-      encoding: 'utf-8',
-      timeout: 180000,
-      windowsHide: true,
-      shell: false,
+    // Fallback: async spawn with a bounded timeout (argv-based, shell:false).
+    const fallbackResult = await new Promise<string>((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const spawnFn = spawn;
+      const child = spawnFn(command, cmdArgs, {
+        cwd: context.workspacePath,
+        windowsHide: true,
+        shell: false,
+      });
+      const timer = setTimeout(() => {
+        try { child.kill(); } catch {}
+        finish(`Test run timed out after 180s.`);
+      }, 180000);
+      const finish = (payload: string) => { if (!settled) { settled = true; clearTimeout(timer); resolve(payload); } };
+      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
+      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
+      child.on('error', (err: Error) => finish(`Test error: ${err.message}`));
+      child.on('close', () => {
+        const output = `${stdout}\n${stderr}`.trim();
+        finish(output.substring(0, 8000) || 'Tests completed (no output)');
+      });
     });
-    const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
-    return output.substring(0, 8000) || 'Tests completed (no output)';
+    return fallbackResult;
   } catch (e: any) {
     return `Error running tests: ${e.message}`;
   }

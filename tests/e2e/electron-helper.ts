@@ -51,14 +51,32 @@ export async function launchLoom(extraArgs: string[] = []): Promise<BootedApp> {
  * within the timeout so the test runner never hangs on a rogue process.
  */
 export async function closeLoom(app: ElectronApplication, timeoutMs = 8000): Promise<void> {
-  try {
-    await app.close();
-  } catch {
-    // If close() rejects (e.g. renderer process already gone), ignore.
-  }
-  // Belt-and-suspenders: ensure the main process is gone.
-  if (!app.process().killed) {
-    const timer = setTimeout(() => app.process().kill('SIGKILL'), timeoutMs);
-    await app.process().on('exit', () => clearTimeout(timer));
+  // app.close() can hang on Windows (native dialog state, slow shutdown);
+  // race it against the timeout instead of awaiting it unboundedly.
+  await Promise.race([
+    app.close().catch(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+  // Packaged exe launches: app.process() may be unavailable (Playwright
+  // throws "reading '_object'") — fall back to nothing; the raced close above
+  // already bounded the wait.
+  let proc: import('child_process').ChildProcess | undefined;
+  try { proc = app.process(); } catch { proc = undefined; }
+  if (proc && proc.exitCode === null && !proc.killed) {
+    try {
+      if (process.platform === 'win32' && proc.pid) {
+        // SIGKILL alone leaves Electron's child processes behind; taskkill /T
+        // takes down the whole tree.
+        const { execFileSync } = require('child_process');
+        try { execFileSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }); } catch {}
+      } else {
+        proc.kill('SIGKILL');
+      }
+    } catch { /* process already gone */ }
+    // Wait briefly for the kill to land; never hang the afterEach hook.
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 3000);
+      proc!.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
   }
 }

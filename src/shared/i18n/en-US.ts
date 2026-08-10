@@ -442,6 +442,7 @@ export const enUS = {
     unstage: 'Unstage',
     stageAll: 'Stage All',
     stage: 'Stage',
+    viewDiff: 'View Diff',
     branch: 'Branch',
     noProvider: 'No source control provider registered',
   },
@@ -607,6 +608,10 @@ export const enUS = {
     runUnsupportedType: 'Run: unsupported file type: .{ext}',
     runStartedFallback: 'Run: started {file}',
     runError: 'Run error: {msg}',
+    runStopped: 'Run: stopped',
+    runFinished: 'Run: process exited (code={code})',
+    runFailed: 'Run: process exited (code={code}){msg}',
+    aboutMessage: 'Loom IDE v0.2.1 — AI-native development environment',
     debugNoSession: 'Debug: no active debug session.',
     debugStopping: 'Debug: stopping...',
     debugStopped: 'Debug: stopped',
@@ -643,7 +648,6 @@ export const enUS = {
   },
 
   aiEngine: {
-    providerNoApiKey: 'Provider {name} has no API Key configured',
     toolTurnsExhausted: 'Tool-turns exhausted. Pick up from the collapsed operation log above, or narrow your task and retry.',
   },
 

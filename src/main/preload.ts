@@ -96,9 +96,11 @@ const loom: Loom = {
     getOrcaProviders: () => ipcRenderer.invoke('ai:getOrcaProviders'),
     approvePlan: (sid) => ipcRenderer.invoke('ai:agent-plan-approve', sid),
     rejectPlan: (sid) => ipcRenderer.invoke('ai:agent-plan-reject', sid),
+    approveDestructive: (sid) => ipcRenderer.invoke('ai:agent-destructive-approve', sid),
+    rejectDestructive: (sid) => ipcRenderer.invoke('ai:agent-destructive-reject', sid),
     rejectAgentEdit: (sid, filePath) => ipcRenderer.invoke('ai:agent-reject-edit', sid, filePath),
     agentChatStream: (messages, workspacePath, openFiles, onChunk, onEnd, onError,
-      onFilePreview, onFileCreated, onFileChanged, onPlanAwait, options) => {
+      onFilePreview, onFileCreated, onFileChanged, onPlanAwait, onDestructiveAwait, options) => {
       const id = crypto.randomUUID();
       const chunkListener = (_e: IpcRendererEvent, rid: string, chunk: unknown) => { if (rid === id) onChunk(chunk as LoomAgentStreamChunk); };
       const endListener = (_e: IpcRendererEvent, rid: string, usage?: unknown) => { if (rid === id) { onEnd(usage as LoomUsage | null | undefined); cleanup(); } };
@@ -109,6 +111,9 @@ const loom: Loom = {
       const fileCreatedListener = (_e: IpcRendererEvent, rid: string, filePath: string, content: string) => { if (rid === id && onFileCreated) onFileCreated(filePath, content); };
       const fileChangedListener = (_e: IpcRendererEvent, rid: string, filePath: string, content: string) => { if (rid === id && onFileChanged) onFileChanged(filePath, content); };
       const planAwaitListener = (_e: IpcRendererEvent, rid: string, planText: string) => { if (rid === id && onPlanAwait) onPlanAwait(planText, id); };
+      const destructiveAwaitListener = (_e: IpcRendererEvent, rid: string, request: unknown) => {
+        if (rid === id && onDestructiveAwait) onDestructiveAwait(request as { type: 'delete' | 'rename'; filePath: string; newPath?: string }, id);
+      };
       const cleanup = () => {
         ipcRenderer.removeListener('ai:agent-chat-chunk', chunkListener);
         ipcRenderer.removeListener('ai:agent-chat-end', endListener);
@@ -117,6 +122,7 @@ const loom: Loom = {
         ipcRenderer.removeListener('ai:agent-file-created', fileCreatedListener);
         ipcRenderer.removeListener('ai:agent-file-changed', fileChangedListener);
         ipcRenderer.removeListener('ai:agent-plan-await', planAwaitListener);
+        ipcRenderer.removeListener('ai:agent-destructive-await', destructiveAwaitListener);
       };
       ipcRenderer.on('ai:agent-chat-chunk', chunkListener);
       ipcRenderer.on('ai:agent-chat-end', endListener);
@@ -125,6 +131,7 @@ const loom: Loom = {
       ipcRenderer.on('ai:agent-file-created', fileCreatedListener);
       ipcRenderer.on('ai:agent-file-changed', fileChangedListener);
       ipcRenderer.on('ai:agent-plan-await', planAwaitListener);
+      ipcRenderer.on('ai:agent-destructive-await', destructiveAwaitListener);
       ipcRenderer.send('ai:agent-chat-stream', id, messages, workspacePath, openFiles, options);
       return () => { ipcRenderer.send('ai:chat-stream-abort', id); cleanup(); };
     },
@@ -269,6 +276,7 @@ const loom: Loom = {
     checkout: (cwd, branch) => ipcRenderer.invoke('git:checkout', cwd, branch),
     log: (cwd, count) => ipcRenderer.invoke('git:log', cwd, count),
     diff: (cwd, file) => ipcRenderer.invoke('git:diff', cwd, file),
+    show: (cwd, file) => ipcRenderer.invoke('git:show', cwd, file),
   },
   terminal: {
     create: (id: string, cwd?: string) => ipcRenderer.invoke('terminal:create', id, cwd),
@@ -301,6 +309,23 @@ const loom: Loom = {
   },
   verification: {
     runCommand: (workspacePath, commandLine) => ipcRenderer.invoke('verification:run-command', workspacePath, commandLine),
+    runStream: (workspacePath, commandLine, onOutput, onExit) => {
+      const id = crypto.randomUUID();
+      const listener = (_e: IpcRendererEvent, rid: string, type: string, payload: unknown) => {
+        if (rid !== id) return;
+        if (type === 'output') {
+          const p = payload as { stream: 'stdout' | 'stderr'; data: string };
+          onOutput(p.stream, p.data);
+        } else if (type === 'exit') {
+          cleanup();
+          onExit(payload as { exitCode: number | null; stdout: string; stderr: string; error?: string });
+        }
+      };
+      const cleanup = () => ipcRenderer.removeListener('verification:run-event', listener);
+      ipcRenderer.on('verification:run-event', listener);
+      ipcRenderer.send('verification:run-command-stream', id, workspacePath, commandLine);
+      return () => { ipcRenderer.send('verification:run-command-abort', id); cleanup(); };
+    },
   },
   debug: {
     start: (scriptPath, cwd) => ipcRenderer.invoke('debug:start', scriptPath, cwd),

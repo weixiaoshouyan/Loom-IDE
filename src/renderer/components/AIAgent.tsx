@@ -20,9 +20,9 @@ import {
   startPlanning,
 } from '../agent-task-state';
 import { buildCodexTerminalInput } from '../assistant-panel';
-import { formatMarkdown } from '../markdown-renderer';
 import { formatUsage } from '../ai-usage';
 import AgentPlanApproval from './AgentPlanApproval';
+import { AgentMessageItem, AgentRunStatus } from './AgentMessageItem';
 import AgentReviewQueue from './AgentReviewQueue';
 import AgentTaskCenter from './AgentTaskCenter';
 import AgentHistoryPanel from './AgentHistoryPanel';
@@ -225,15 +225,6 @@ function createReviewId(filePath: string): string {
   return filePath.replace(/[\\/:\s]+/g, '-').toLowerCase();
 }
 
-function renderToolArgs(args: unknown): string {
-  if (typeof args === 'string') return args;
-  try {
-    return JSON.stringify(args ?? {}, null, 2);
-  } catch {
-    return String(args ?? '');
-  }
-}
-
 function cleanAssistantDisplayText(content: string): string {
   return content
     .replace(/(?:^|\n)\s*(?:Using|Calling) tool:\s*[A-Za-z0-9_-]+\s*/g, '\n')
@@ -322,11 +313,11 @@ function DiffPreview({
       </div>
       <div className="agent-diff-grid">
         <div>
-          <div className="agent-diff-label">原始</div>
+          <div className="agent-diff-label">原始</div>
           <pre>{item.original || '(new file)'}</pre>
         </div>
         <div>
-          <div className="agent-diff-label">建议</div>
+          <div className="agent-diff-label">建议</div>
           <pre>{item.modified}</pre>
         </div>
       </div>
@@ -383,6 +374,16 @@ export default function AIAgent({
   const pendingPlanStreamIdRef = useRef<string | null>(null);
   // 当前 agent 流 id（onFilePreview 回调透传），用于拒绝尚未落盘的修改
   const currentStreamIdRef = useRef<string | null>(null);
+  // 当前运行中的消息 requestId：停止生成时也要把 isStreaming 复位，否则
+  // 消息永久悬挂在流式样式且历史会话永不落盘。
+  const currentRequestIdRef = useRef<string | null>(null);
+  // 最新 send 引用：状态条「继续」按钮在 setInput 之后调用，需要拿到新闭包。
+  const sendRef = useRef<() => void>(() => {});
+  // 破坏性操作（delete/rename）等待用户审批
+  const [pendingDestructive, setPendingDestructive] = useState<{
+    request: { type: 'delete' | 'rename'; filePath: string; newPath?: string };
+    sid: string;
+  } | null>(null);
   const terminalId = useMemo(() => `assistant-agent-${Math.random().toString(36).slice(2)}`, []);
 
   // ===== @-mention popover =====
@@ -831,6 +832,7 @@ export default function AIAgent({
     if (!prompt || loading) return;
 
     const requestId = crypto.randomUUID();
+    currentRequestIdRef.current = requestId;
     const attachedFiles = [...openFiles];
     const userMessage: Message = { role: 'user', content: prompt, attachedFiles };
     const assistantMessage: Message = {
@@ -936,6 +938,8 @@ export default function AIAgent({
             if (usage) setUsageText(formatUsage(usage, activeProvider?.activeModel));
             abortRef.current = null;
             pendingPlanStreamIdRef.current = null;
+            setPendingDestructive(null);
+            currentRequestIdRef.current = null;
             refreshAgentTasks();
           },
           (error: Error) => {
@@ -946,6 +950,8 @@ export default function AIAgent({
             setAgentTask(prev => failTask(prev, errorMsg));
             abortRef.current = null;
             pendingPlanStreamIdRef.current = null;
+            setPendingDestructive(null);
+            currentRequestIdRef.current = null;
           },
           (filePath: string, content: string, existed: boolean, originalContent: string, sid?: string) => {
             if (sid) currentStreamIdRef.current = sid;
@@ -956,6 +962,10 @@ export default function AIAgent({
           (planText: string, sid: string) => {
             // 主进程已暂停 agent，等待用户在 UI 上确认/拒绝
             pendingPlanStreamIdRef.current = sid;
+          },
+          (request: { type: 'delete' | 'rename'; filePath: string; newPath?: string }, sid: string) => {
+            // 主进程已暂停 agent 的 delete/rename 工具，等待用户审批
+            setPendingDestructive({ request, sid });
           },
           {
             previewFileWrites: true,
@@ -1019,12 +1029,26 @@ export default function AIAgent({
     workspaceRules,
   ]);
 
+  // 保持 sendRef 指向最新 send 闭包（「继续」按钮等场景需要新 input 值）。
+  useEffect(() => { sendRef.current = send; });
+
+  // 运行结束后一键继续：以当前对话历史再发一轮。
+  const continueAgent = useCallback(() => {
+    if (loading) return;
+    setInput(locale === 'zh-CN' ? '继续' : 'Continue');
+    setTimeout(() => sendRef.current(), 0);
+  }, [loading, locale]);
+
   const stopGeneration = useCallback(() => {
     abortRef.current?.();
     abortRef.current = null;
     setLoading(false);
     setAgentTask(prev => cancelTask(prev));
-  }, []);
+    // 停止时同步复位流式状态，避免消息永久悬挂（isStreaming 不落盘、样式残留）。
+    const rid = currentRequestIdRef.current;
+    if (rid) finishAssistantMessage(rid);
+    currentRequestIdRef.current = null;
+  }, [finishAssistantMessage]);
 
   const startNewChat = useCallback(() => {
     stopGeneration();
@@ -1079,6 +1103,20 @@ export default function AIAgent({
     setAgentTask(prev => cancelTask(prev));
   }, []);
 
+  const approveDestructiveAction = useCallback(() => {
+    const pending = pendingDestructive;
+    if (!pending) return;
+    getLoom()?.ai?.approveDestructive?.(pending.sid);
+    setPendingDestructive(null);
+  }, [pendingDestructive]);
+
+  const rejectDestructiveAction = useCallback(() => {
+    const pending = pendingDestructive;
+    if (!pending) return;
+    getLoom()?.ai?.rejectDestructive?.(pending.sid);
+    setPendingDestructive(null);
+  }, [pendingDestructive]);
+
 
   const cancelAgentCommandTask = useCallback(async (taskId: string) => {
     await window.loom?.agentTasks?.cancel?.(taskId);
@@ -1099,10 +1137,10 @@ export default function AIAgent({
   }, [terminalId]);
 
   const quickActions = [
-    { id: 'review', title: 'Code Review', text: 'Review the current code and find bugs or improvements.' },
-    { id: 'explain', title: 'Explain', text: 'Explain how this code works in detail.' },
-    { id: 'refactor', title: 'Refactor', text: 'Suggest refactoring improvements for better code quality.' },
-    { id: 'tests', title: 'Add Tests', text: 'Write unit tests for this code.' },
+    { id: 'review', title: locale === 'zh-CN' ? '代码审查' : 'Code Review', text: locale === 'zh-CN' ? '审查当前代码，找出 bug 和改进点。' : 'Review the current code and find bugs or improvements.' },
+    { id: 'explain', title: locale === 'zh-CN' ? '解释代码' : 'Explain', text: locale === 'zh-CN' ? '详细解释这段代码的工作原理。' : 'Explain how this code works in detail.' },
+    { id: 'refactor', title: locale === 'zh-CN' ? '重构建议' : 'Refactor', text: locale === 'zh-CN' ? '为提升代码质量给出重构建议。' : 'Suggest refactoring improvements for better code quality.' },
+    { id: 'tests', title: locale === 'zh-CN' ? '编写测试' : 'Add Tests', text: locale === 'zh-CN' ? '为这段代码编写单元测试。' : 'Write unit tests for this code.' },
   ];
 
   if (!config) {
@@ -1123,7 +1161,7 @@ export default function AIAgent({
     <div className="ai-agent-panel" style={{ width }} data-testid="ai-agent-panel">
       <div className="ai-header">
         <div className="ai-header-title">
-          Agent <span className="ai-header-subtitle">{activeProvider?.name || '未配置模型'}</span>
+          {locale === 'zh-CN' ? '智能体' : 'Agent'} <span className="ai-header-subtitle">{activeProvider?.name || '未配置模型'}</span>
         </div>
         <div className="ai-header-actions">
           <button type="button" onClick={runTerminalCommand} className="ai-header-btn" title="打开终端" aria-label="打开终端" data-testid="ai-toggle-terminal">
@@ -1175,7 +1213,7 @@ export default function AIAgent({
           data-testid="ai-mode-chat"
           onClick={() => setAgentMode(false)}
         >
-          Chat
+          {locale === 'zh-CN' ? '对话' : 'Chat'}
         </button>
         <label className="ai-safe-edit-toggle">
           <input
@@ -1218,7 +1256,38 @@ export default function AIAgent({
         />
       )}
 
-      <AgentPlanApproval task={agentTask} onApprove={approveCurrentPlan} onCancel={rejectCurrentPlan} />
+      <AgentPlanApproval task={agentTask} onApprove={approveCurrentPlan} onCancel={rejectCurrentPlan} locale={locale} />
+
+      <AgentRunStatus
+        task={agentTask}
+        usageText={usageText}
+        toolCount={messages.reduce((n, m) => n + (m.toolCalls?.length || 0), 0)}
+        locale={locale}
+        onContinue={continueAgent}
+      />
+
+      {pendingDestructive && (
+        <div className="agent-destructive-bar" data-testid="agent-destructive-bar">
+          <div className="agent-destructive-info">
+            <span className="agent-destructive-icon">⚠</span>
+            <span className="agent-destructive-text">
+              {pendingDestructive.request.type === 'delete'
+                ? (locale === 'zh-CN' ? 'Agent 请求删除：' : 'Agent wants to delete: ')
+                : (locale === 'zh-CN' ? 'Agent 请求重命名：' : 'Agent wants to rename: ')}
+              {pendingDestructive.request.filePath}
+              {pendingDestructive.request.newPath ? ` → ${pendingDestructive.request.newPath}` : ''}
+            </span>
+          </div>
+          <div className="agent-destructive-actions">
+            <button type="button" className="agent-destructive-btn approve" onClick={approveDestructiveAction}>
+              {locale === 'zh-CN' ? '允许' : 'Approve'}
+            </button>
+            <button type="button" className="agent-destructive-btn reject" onClick={rejectDestructiveAction}>
+              {locale === 'zh-CN' ? '拒绝' : 'Reject'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="ai-messages" data-testid="ai-messages">
         {messages.length === 0 && (
@@ -1242,40 +1311,15 @@ export default function AIAgent({
         )}
 
         {messages.map((message, index) => (
-          <div key={`${message.role}-${index}`} className={`ai-message ai-msg-${message.role} ${message.isStreaming ? 'streaming' : ''}`}>
-            <div
-              className="ai-message-content"
-              dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content || '') }}
-            />
-            {message.attachedFiles && message.attachedFiles.length > 0 && (
-              <div className="ai-attached-files">
-                {message.attachedFiles.map(file => (
-                  <span key={file.path} title={file.path}>@{file.name}</span>
-                ))}
-              </div>
-            )}
-            {message.toolCalls && message.toolCalls.length > 0 && (
-              <details className="ai-operations-log" data-testid="ai-operations-log">
-                <summary>
-                  <span>操作记录</span>
-                  <strong>{message.toolCalls.length}</strong>
-                  <small>工具和命令输出已折叠</small>
-                </summary>
-                <div className="ai-tool-calls">
-                  {message.toolCalls.map((tool, toolIndex) => (
-                    <details key={`${tool.name}-${toolIndex}`} className={`ai-tool-call ${tool.status}`} data-testid="ai-tool-call" open={tool.expanded}>
-                      <summary>
-                        <span>{tool.status === 'done' ? '已完成' : tool.status === 'running' ? '运行中' : tool.status}</span>
-                        <strong>{tool.name}</strong>
-                      </summary>
-                      <pre>{renderToolArgs(tool.args)}</pre>
-                      {tool.result && <pre>{tool.result}</pre>}
-                    </details>
-                  ))}
-                </div>
-              </details>
-            )}
-          </div>
+          <AgentMessageItem
+            key={`${message.role}-${index}`}
+            role={message.role}
+            content={message.content}
+            isStreaming={message.isStreaming}
+            toolCalls={message.toolCalls}
+            attachedFiles={message.attachedFiles}
+            locale={locale}
+          />
         ))}
       </div>
 
@@ -1297,6 +1341,7 @@ export default function AIAgent({
         onSelect={setSelectedReviewId}
         onAccept={acceptChange}
         onReject={rejectChange}
+        locale={locale}
       />
       <DiffPreview item={reviewItem} onAccept={acceptChange} onReject={rejectChange} />
 

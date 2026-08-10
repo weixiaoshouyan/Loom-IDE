@@ -18,7 +18,7 @@ import { DevelopmentCommandQueue } from '../agent/development-command';
 import { canAccess } from './path-permissions';
 
 // ---- Shared state (set by index.ts) ----------------------------------------
-let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean } } | null = null;
+let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean }; isDestroyed: () => boolean } | null = null;
 let _aiEngine: AIEngine | null = null;
 let _mcpClient: any = null;
 let _skillManager: any = null;
@@ -66,10 +66,19 @@ function ensureAIEngine() {
 
 const activeStreams = new Map<string, { abort: boolean; controller?: AbortController }>();
 const pendingPlanApprovals = new Map<string, (approved: boolean) => void>();
+/** Destructive-action approvals (delete_file / rename_file) awaiting user verdict. */
+const pendingDestructiveApprovals = new Map<string, (approved: boolean) => void>();
 
 function sendToRenderer(channel: string, ...args: any[]) {
-  const wc = resolvedMainWindow?.webContents;
-  if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  try {
+    const win = resolvedMainWindow;
+    if (!win) return;
+    // AI streams may outlive the window (close while streaming) — reading
+    // `.webContents` on a destroyed BrowserWindow throws.
+    if (typeof win.isDestroyed === 'function' && win.isDestroyed()) return;
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* window destroyed mid-send — drop the event */ }
 }
 
 function getEngine(): AIEngine {
@@ -206,7 +215,23 @@ export function registerAIHandlers() {
           onFilePreview: callbacks.onFilePreview,
           onFileCreated: callbacks.onFileCreated,
           onFileChanged: callbacks.onFileChanged,
-        }, 15, controller.signal, {
+          // Real approval gate for destructive operations: the tool call blocks
+          // until the user clicks Approve/Reject in the AI panel. The model can
+          // no longer self-confirm delete/rename with `confirm: true`.
+          onDestructiveApproval: (request: { type: 'delete' | 'rename'; filePath: string; newPath?: string }) =>
+            new Promise<boolean>((resolve, reject) => {
+              pendingDestructiveApprovals.set(id, resolve);
+              sendToRenderer('ai:agent-destructive-await', id, request);
+              const onAbort = () => {
+                pendingDestructiveApprovals.delete(id);
+                reject(new Error('Destructive action approval aborted (stream cancelled).'));
+              };
+              if (controller.signal.aborted) onAbort();
+              else controller.signal.addEventListener('abort', onAbort, { once: true });
+            }),
+          // 主 agent 轮次上限 30：大任务（多文件重构/修测试）15 轮经常不够。
+        // 成本由 token 预算（默认 80k）先行约束，轮次多不会失控。
+      }, 30, controller.signal, {
           plannerMode: options?.plannerMode === true,
           planOnly: options?.planOnly === true,
           verifyMode: options?.verifyMode === true,
@@ -236,6 +261,7 @@ export function registerAIHandlers() {
       } finally {
         activeStreams.delete(id);
         pendingPlanApprovals.delete(id);
+        pendingDestructiveApprovals.delete(id);
         pendingEditGates.delete(id);
       }
     })();
@@ -250,6 +276,18 @@ export function registerAIHandlers() {
   ipcMain.handle('ai:agent-plan-reject', (_e: any, sid: string) => {
     const r = pendingPlanApprovals.get(sid);
     if (r) { pendingPlanApprovals.delete(sid); r(false); }
+    return true;
+  });
+
+  // Destructive-action approve/reject (delete_file / rename_file).
+  ipcMain.handle('ai:agent-destructive-approve', (_e: any, sid: string) => {
+    const r = pendingDestructiveApprovals.get(sid);
+    if (r) { pendingDestructiveApprovals.delete(sid); r(true); }
+    return true;
+  });
+  ipcMain.handle('ai:agent-destructive-reject', (_e: any, sid: string) => {
+    const r = pendingDestructiveApprovals.get(sid);
+    if (r) { pendingDestructiveApprovals.delete(sid); r(false); }
     return true;
   });
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { t } from '@/shared/i18n';
 import { Terminal as XTerminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { getLoom } from '../loom-ipc';
@@ -89,14 +90,14 @@ export default function Terminal({ visible, termId = 'term-1', workspacePath }: 
     const removeOnExit = getLoom()?.terminal?.onExit?.(termId, (code: number | null) => {
       const c = typeof code === 'number' ? code : 0;
       // Map common exit codes to friendly messages
-      let label = `退出码 ${c}`;
-      if (c === 0) label = '正常退出';
-      else if (c === -1073741510 || c === 0xC000013A) label = '被中断 (Ctrl+C)';
-      else if (c === 1) label = '一般错误';
-      else if (c === 2) label = '用法错误';
-      else if (c === 126) label = '权限不足';
-      else if (c === 127) label = '命令未找到';
-      termRef.current?.writeln(`\r\n\x1b[90m[进程已退出: ${label}]\x1b[0m`);
+      let label = t('terminal.exitCodeLabel', { code: c });
+      if (c === 0) label = t('terminal.exitNormal');
+      else if (c === -1073741510 || c === 0xC000013A) label = t('terminal.exitInterrupted');
+      else if (c === 1) label = t('terminal.exitGenericError');
+      else if (c === 2) label = t('terminal.exitUsageError');
+      else if (c === 126) label = t('terminal.exitPermissionDenied');
+      else if (c === 127) label = t('terminal.exitCommandNotFound');
+      termRef.current?.writeln(`\r\n\x1b[90m${t('terminal.processExitedWithLabel', { label })}\x1b[0m`);
     });
 
     const handleResize = () => {

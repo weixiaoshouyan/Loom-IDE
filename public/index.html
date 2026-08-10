@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' http://localhost:*; style-src 'self' 'unsafe-inline' https:; font-src 'self' https: data:; connect-src 'self' http://localhost:* https://* ws://localhost:* wss://*; worker-src blob: 'self'; img-src 'self' data: blob:;" />
-  <title>织网 IDE</title>
+  <!-- CSP is injected at build/dev time by config/vite.config.ts (loom-csp plugin)
+       so the policy can differ between dev (HMR needs inline+ws) and prod (strict). -->
+  <title>Loom IDE</title>
 </head>
 <body>
   <div id="root"></div>

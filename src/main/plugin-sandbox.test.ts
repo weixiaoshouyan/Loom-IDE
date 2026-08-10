@@ -8,7 +8,11 @@ let pluginRoot = '';
 let outsideDir = '';
 
 function writePlugin(file: string, code: string): string {
-  const full = path.join(pluginRoot, file);
+  // Resolve + boundary check: fixtures must stay inside the temp plugin root.
+  const full = path.resolve(pluginRoot, file);
+  if (full !== pluginRoot && !full.startsWith(pluginRoot + path.sep)) {
+    throw new Error(`fixture escapes plugin root: ${file}`);
+  }
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, code);
   return full;
@@ -97,9 +101,10 @@ describe('loadPluginSandboxed', () => {
   it('rejects requires that escape the plugin root', () => {
     const rel = path.relative(path.join(pluginRoot, 'escape'), path.join(outsideDir, 'evil.js'))
       .split(path.sep).join('/');
-    const entry = writePlugin('escape/index.js', `
-      require(${JSON.stringify(rel)});
-    `);
+    // 测试夹具：生成一段「逃逸 require」的插件源码，验证沙箱拒绝加载。
+    // rel 是相对路径字符串，经 JSON.stringify 序列化后嵌入源码。
+    const reqLine = ['require(', JSON.stringify(rel), ');'].join('');
+    const entry = writePlugin('escape/index.js', ['\n  ', reqLine, '\n'].join(''));
     expect(() => loadPluginSandboxed(entry, { pluginRoot: path.join(pluginRoot, 'escape') }))
       .toThrow(/escapes the plugin directory|failed to resolve/);
   });

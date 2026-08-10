@@ -25,7 +25,7 @@ function Sidebar({ view, workspacePath, onOpenFile, onOpenFolder, onCloseFolder,
     <div className="sidebar" style={{ width: sidebarWidth }}>
       {view === 'explorer' && <SidebarExplorerView workspacePath={workspacePath} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onCloseFolder={onCloseFolder} selectedFile={selectedFile} gitStatusMap={gitStatusMap} locale={locale} />}
       {view === 'search' && <SidebarSearchView workspacePath={workspacePath} onOpenFile={onOpenFile} locale={locale} />}
-      {view === 'git' && <SidebarGitView workspacePath={workspacePath} locale={locale} />}
+      {view === 'git' && <SidebarGitView workspacePath={workspacePath} onOpenFile={onOpenFile} locale={locale} />}
       {view === 'extensions' && <SidebarExtensionsView locale={locale} workspacePath={workspacePath} onOpenFile={onOpenFile} />}
       {view === 'outline' && (
         <>

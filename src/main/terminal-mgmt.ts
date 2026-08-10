@@ -12,7 +12,7 @@ import path from 'path';
 import { canAccess } from './path-permissions';
 
 // Set by index.ts after the window is created.
-let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean } } | null = null;
+let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean }; isDestroyed: () => boolean } | null = null;
 export function setMainWindow(w: any) { resolvedMainWindow = w; }
 
 // Lazily-loaded node-pty spawn.
@@ -51,22 +51,33 @@ function resolveShellCwd(requested: string | undefined): string {
  * a captured event.sender, which becomes invalid when its window closes).
  */
 function sendToRenderer(channel: string, ...args: any[]) {
-  const wc = resolvedMainWindow?.webContents;
-  if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  try {
+    const win = resolvedMainWindow;
+    if (!win) return;
+    // The window may have been destroyed (app quit / window closed) while a
+    // node-pty callback was in flight — reading `.webContents` on a destroyed
+    // BrowserWindow throws "Object has been destroyed".
+    if (typeof win.isDestroyed === 'function' && win.isDestroyed()) return;
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* window destroyed mid-send — drop the event */ }
 }
 
 export function registerTerminalHandlers() {
   ipcMain.handle('terminal:create', async (event: any, termId: string, cwd?: string) => {
     if (!isValidTermId(termId)) return false;
     const ptyFn = getPty();
-    const shellCmd = process.env.ComSpec || 'powershell.exe';
+    // SECURITY: launch a fixed, known shell binary — never an arbitrary
+    // program from the environment (ComSpec is attacker-influenceable).
+    // PowerShell ships with every Windows install and is always on PATH.
+    // Spawn is argv-based with shell:false.
     // SECURITY: shell starts in the workspace (or user home), never in an
     // arbitrary attacker-chosen directory.
     const shellCwd = resolveShellCwd(cwd);
 
     if (ptyFn) {
       try {
-        const ptyProcess = ptyFn(shellCmd, [], {
+        const ptyProcess = ptyFn('powershell.exe', [], {
           name: 'xterm-256color',
           cols: 80,
           rows: 24,
@@ -87,10 +98,8 @@ export function registerTerminalHandlers() {
       }
     }
 
-    // Fallback: child_process spawn.
-    const isPowerShell = shellCmd.toLowerCase().includes('powershell');
-    const args = isPowerShell ? ['-NoLogo'] : [];
-    const child = spawn(shellCmd, args, {
+    // Fallback: child_process spawn — same fixed shell binary.
+    const child = spawn('powershell.exe', ['-NoLogo'], {
       cwd: shellCwd,
       env: { ...process.env, TERM: 'xterm-256color' },
       stdio: ['pipe', 'pipe', 'pipe'],

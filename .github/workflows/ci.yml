@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -48,8 +48,8 @@ jobs:
       - name: Build renderer
         run: npx vite build --config config/vite.config.ts
 
-      # ---- End-to-end smoke tests (Electron + Playwright) ----
+      # ---- End-to-end tests (Electron + Playwright): smoke + workspace workflow ----
       # Playwright downloads its own browser; we tell it to also use the
       # system-installed Electron dist pointed at by node_modules.
-      - name: Run E2E smoke tests
-        run: npx playwright test tests/e2e/loom-smoke.spec.ts --config tests/e2e/playwright.config.ts
+      - name: Run E2E tests
+        run: npx playwright test tests/e2e --config tests/e2e/playwright.config.ts

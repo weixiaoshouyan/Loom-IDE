@@ -87,15 +87,27 @@ async function configureTypeScriptWorkspace(workspacePath: string): Promise<void
 }
 
 // ====== AI Tab Completion (Ghost Text) ======
-// Register a minimal inline completion provider that debounces and calls AI.
-// Completion only fires when AI is configured and the editor is in a code context.
-const aiCompletionTimer: ReturnType<typeof setTimeout> | null = null;
-const aiCompletionAbort: (() => void) | null = null;
+// Monaco calls provideInlineCompletions on EVERY keystroke, so the provider
+// implements a real idle debounce: 700ms of typing silence before any network
+// I/O. While a request is in flight, further keystrokes are skipped (Monaco
+// re-triggers after we resolve). Requests use the streaming chat channel so a
+// cancelled token aborts the in-flight HTTP request in the main process.
+let aiCompletionTimer: ReturnType<typeof setTimeout> | null = null;
+let aiCompletionInFlight = false;
 
 function registerAICompletionProvider() {
   try {
     monaco.languages.registerInlineCompletionsProvider('*', {
       provideInlineCompletions: async (model, position, _context, token) => {
+        // One request at a time — avoid piling up HTTP calls while typing fast.
+        if (aiCompletionInFlight) return { items: [] };
+        // Debounce: restart the 700ms idle window on every keystroke.
+        if (aiCompletionTimer) clearTimeout(aiCompletionTimer);
+        await new Promise<void>((resolve) => {
+          aiCompletionTimer = setTimeout(() => { aiCompletionTimer = null; resolve(); }, 700);
+        });
+        if (token.isCancellationRequested) return { items: [] };
+
         // Skip if no AI config available
         try {
           const config = await window.loom.ai.getConfig();
@@ -136,11 +148,26 @@ ${textBeforeCursor.trimEnd()}█${textAfterCursor.trimStart()}
 
 Return ONLY the completion, no explanation.`;
 
+        aiCompletionInFlight = true;
         try {
-          const response = await window.loom.ai.chat(
-            [{ role: 'user', content: prompt }],
-            undefined
-          );
+          // Streaming chat gives us a real cancel handle: the returned cleanup
+          // sends ai:chat-stream-abort, killing the HTTP request mid-flight.
+          const response = await new Promise<string | null>((resolve) => {
+            let acc = '';
+            let settled = false;
+            const finish = (value: string | null) => { if (!settled) { settled = true; resolve(value); } };
+            let stop: (() => void) | null = null;
+            try {
+              stop = window.loom.ai.chatStream(
+                [{ role: 'user', content: prompt }],
+                undefined,
+                (chunk) => { acc += chunk; },
+                () => finish(acc),
+                (err) => finish('Error:' + err.message),
+              );
+            } catch (e) { finish('Error:' + (e as Error).message); }
+            if (stop) token.onCancellationRequested(() => stop());
+          });
 
           if (token.isCancellationRequested || !response || response.startsWith('Error:')) {
             return { items: [] };
@@ -161,10 +188,11 @@ Return ONLY the completion, no explanation.`;
           };
         } catch {
           return { items: [] };
+        } finally {
+          aiCompletionInFlight = false;
         }
       },
       freeInlineCompletions: () => {},
-      // Debounce: only trigger after 700ms of idle (reduced from 1200)
       groupId: 'loom-ai-completion',
       handleDidShowCompletionItem: () => {},
     } as monaco.languages.InlineCompletionsProvider);

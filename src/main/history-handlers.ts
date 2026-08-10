@@ -181,7 +181,10 @@ export function runHistoryCleanup(): { entriesPruned: number; filesRemoved: numb
 
 // Overload: prune a specific JSONL file by its stored name.
 function pruneHistoryFile(fileName: string, policy: ReturnType<typeof getPolicy>): number {
-  const fp = path.join(historyDir, fileName);
+  // fileName is a readdirSync entry, but resolve + boundary-check anyway so a
+  // crafted name can never escape historyDir.
+  const fp = path.resolve(historyDir, fileName);
+  if (fp !== historyDir && !fp.startsWith(historyDir + path.sep)) return 0;
   if (!fs.existsSync(fp)) return 0;
   // Read, parse, filter — same logic as pruneFile but keyed on disk name.
   const lines = fs.readFileSync(fp, 'utf-8').split('\n').filter(Boolean);

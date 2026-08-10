@@ -6,6 +6,7 @@
  * are dispatched via CustomEvent so the Editor component can handle them.
  */
 import { useEffect } from 'react';
+import { t } from '@/shared/i18n';
 
 export interface ShortcutActions {
   createUntitledFile: () => void;
@@ -46,8 +47,9 @@ export function useKeyboardShortcuts(actions: ShortcutActions, state: ShortcutSt
       if (ctrl && !e.shiftKey && key === 'w') { e.preventDefault(); if (state.openFilesCount) actions.closeTab(state.activeIdx); return; }
       if (ctrl && !e.shiftKey && key === 'o') { e.preventDefault(); actions.openFileFromDisk(); return; }
       if (ctrl && e.shiftKey && key === 'o') { e.preventDefault(); actions.openFolder(); return; }
+      // Quick Open (Ctrl+P) — always opens (never toggles) the command palette.
+      if (ctrl && !e.shiftKey && key === 'p') { e.preventDefault(); actions.setCmdPalette(() => true); return; }
       if (ctrl && e.shiftKey && key === 'p') { e.preventDefault(); actions.setCmdPalette(p => !p); return; }
-      if (ctrl && key === 'l') { e.preventDefault(); actions.setAiOpen(p => !p); return; }
       if (ctrl && e.shiftKey && key === 'e') { e.preventDefault(); actions.setSidebarView('explorer'); return; }
       if (ctrl && e.shiftKey && key === 'f') { e.preventDefault(); actions.setSidebarView('search'); return; }
       if (ctrl && e.shiftKey && key === 'g') { e.preventDefault(); actions.setSidebarView('git'); return; }
@@ -71,7 +73,7 @@ export function useKeyboardShortcuts(actions: ShortcutActions, state: ShortcutSt
       if (ctrl && key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })); return; }
 
       // Debugger
-      if (!ctrl && !e.altKey && !e.shiftKey && key === 'f5') { e.preventDefault(); if (state.isDebugging) actions.addOutput('Debug: 继续 (F5)'); else actions.startDebug(); return; }
+      if (!ctrl && !e.altKey && !e.shiftKey && key === 'f5') { e.preventDefault(); if (state.isDebugging) actions.addOutput(t('app.debugContinue')); else actions.startDebug(); return; }
       if (e.shiftKey && !ctrl && !e.altKey && key === 'f5') { e.preventDefault(); actions.stopDebug(); return; }
       if (ctrl && e.shiftKey && key === 'f5') { e.preventDefault(); actions.stopDebug(); setTimeout(() => actions.startDebug(), 100); return; }
       if (ctrl && !e.shiftKey && !e.altKey && key === 'f5') { e.preventDefault(); actions.runCurrentFile(); return; }

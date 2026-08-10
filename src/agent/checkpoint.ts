@@ -42,6 +42,28 @@ export class CheckpointManager {
     return filePath;
   }
 
+  /**
+   * Retention policy: keep only the `maxCount` newest checkpoints (LRU by
+   * creation time) and drop anything older than `maxAgeMs`. Called after every
+   * save — without this the checkpoint dir grows without bound (each agent run
+   * can dump hundreds of KB of conversation + tool output to disk).
+   */
+  prune(maxCount = 10, maxAgeMs = 7 * 24 * 60 * 60 * 1000): number {
+    if (!fs.existsSync(this.checkpointDir)) return 0;
+    let removed = 0;
+    try {
+      const entries = this.list();
+      const cutoff = Date.now() - maxAgeMs;
+      for (const c of entries.slice(maxCount)) {
+        if (this.delete(c.id)) removed++;
+      }
+      for (const c of entries) {
+        if (c.createdAt < cutoff && this.delete(c.id)) removed++;
+      }
+    } catch { /* best-effort */ }
+    return removed;
+  }
+
   load(checkpointId: string): AgentCheckpoint | null {
     const filePath = path.join(this.checkpointDir, `${checkpointId}.json`);
     if (!fs.existsSync(filePath)) return null;

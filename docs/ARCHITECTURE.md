@@ -68,7 +68,7 @@
 │   • 平台:      settings / config / runtime-state / crash-handler / startup-trace       │
 │                                                                                       │
 │  安全边界（已整改中）: path-permissions · command-policy · safeStorage                  │
-│  ⚠ plugin-host.activateInHost() 用 require() 把插件加载进【本进程】——无隔离            │
+│  ✅ 插件已接入 vm 沙箱（plugin-sandbox.ts：能力门禁 + 原型污染防护，A2 已落地）           │
 └──────┬───────────────────────────────────────────────────────────────────────────────┘
        │ 调用外部
        ├─▶ LLM / Orca Proxy      ├─▶ MCP Servers        ├─▶ Git / FS
@@ -100,8 +100,7 @@
 ## 3. 可扩展性评估：四根杠杆与取舍
 
 ### 杠杆 A — 扩展隔离模型（最高优先级）
-- **现状**：`plugin-host.ts` 自述"full process isolation is a future step"；`activateInHost` `require()` 进 main 进程。
-- **问题**：插件与 `path-permissions`/`command-policy` 同进程 → 一个坏插件可绕过所有安全边界；崩溃拖垮整个 IDE。这与你们正在做的安全整改**直接矛盾**。
+- **现状**：插件加载已接入 `plugin-sandbox.ts` 的 **vm 沙箱**（A2 止血已落地）：能力门禁 `require`（fs/network/child_process 按声明能力解锁）、原型链污染防护（constructor/proto 屏蔽）、5s 执行超时。仍与主进程同进程——**A1（UtilityProcess 隔离）仍是 Phase 2 目标**。
 - **取舍**：
   - 方案 A1（推荐）：插件跑在 **Electron UtilityProcess / 独立渲染进程**，仅通过**能力 API（Capability API）** 与主进程通信，能力按需声明（类 VSCode proposed API 门禁）。
     - 得：真正隔离、崩溃可控、安全边界不再被绕过。
@@ -111,7 +110,7 @@
     - 失：vm 沙箱对原生模块/原型污染防护有限，**隔离不彻底**，不满足安全基线。
 
 ### 杠杆 B — IPC 契约治理
-- **现状**：`preload.ts` 与 `renderer/loom-ipc.ts` 手写双份、全 `any`、无版本、无校验。已发现 `codeIndex.prebuild` → `'codeindex:prebuild'` 与 main 端 `'code-index:prebuild'` 错位（prebuild 空转）。
+- **现状**：`preload.ts` 与 `renderer/loom-ipc.ts` 手写双份、无版本、无运行时校验；`ipc-contract.test.ts` 已做通道名自动对等断言（`codeindex:prebuild` 错位已修复）。`any` 存量约 650 处（pre-commit 已阻断新增）。
 - **取舍**：
   - 方案 B1（推荐）：**单一事实源**——用一份 TS 接口 + `zod`/`runtypes` schema 描述契约；`preload` 与客户端由 schema **代码生成/校验**；契约加 `major.minor` 版本号，破坏式变更升 major。
     - 得：消除漂移、类型安全、可演进、可在边界做安全校验。
@@ -165,9 +164,9 @@
 
 | 阶段 | 目标 | 关键动作 | 退出标准 |
 |---|---|---|---|
-| **Phase 0**（已交付） | 质量基线 | QUALITY-GATE：tsc 双绿、ESLint 覆盖 renderer、覆盖率阈值、CI/pre-commit | lint+test 在 CI 强制绿 |
-| **Phase 1**（下 1–2 季度） | 契约与能力固化 | ADR-003 契约代码生成+校验；ADR-005 Tool Registry + 能力标签；插件声明式 capabilities 契约冻结；修 `codeindex` 错位等契约 bug | 100+ IPC 全类型化、边界校验上线 |
-| **Phase 2** | 隔离与安全加固 | ADR-002 插件进程隔离（先 vm 兜底→UtilityProcess）；市场信任/审核；AI planner GA | 插件崩溃不影响主进程；安全边界不被绕过 |
+| **Phase 0**（已交付） | 质量基线 | QUALITY-GATE：tsc 双绿、ESLint 覆盖 renderer、覆盖率阈值（2026-08-10 校准为真实基线 22/18/22/24）、CI/pre-commit | lint+test 在 CI 强制绿 |
+| **Phase 1**（进行中） | 契约与能力固化 | ADR-003 契约代码生成+校验；ADR-005 Tool Registry + 能力标签；插件声明式 capabilities 契约（vm 沙箱 A2 已落地，见杠杆 A）；`codeindex` 错位等契约 bug 已修 | 100+ IPC 全类型化、边界校验上线 |
+| **Phase 2** | 隔离与安全加固 | ADR-002 插件迁 UtilityProcess（A1）；市场信任/审核；AI planner GA；渲染层组件覆盖率（istanbul provider） | 插件崩溃不影响主进程；安全边界不被绕过 |
 | **Phase 3** | 协同与同步 | ADR-004 落地 settings/extensions/会话 云同步；团队规则→真实协同（决策点） | 多设备一致；可选团队 presence |
 | **Phase 4** | 远程化（按需） | Agent 重负载迁后端/Orca；多租户（仅当产品确需） | 重 Agent 任务不阻塞本地 |
 
@@ -192,11 +191,16 @@
 
 ## 7. 立即可落地的"快赢"（Quick Wins，无需等路线图）
 
-1. **修契约错位 bug**：`preload.ts:12` `codeIndex.prebuild` 调 `'codeindex:prebuild'`，与 main 端 `'code-index:prebuild'` 不一致 → prebuild 空转。一行修复。
-2. **冻结插件 capabilities 字段**：在 `PluginManifest` 加 `capabilities?: string[]`，Phase 1 起强校验（不改加载器也能先落地）。
-3. **bridge 入参校验**：在 `preload.ts` 对每个 `ipcRenderer.invoke` 的入参做最小 zod 校验，兼作安全输入门禁（顺带修 `any`）。
-4. **契约单测覆盖扩面**：现有 `dialog-contract.test.ts` 仅覆盖一个契约；把"preload 暴露的方法名 == main 注册的 handler 名"做成**自动断言测试**，防再漂移。
-5. **插件加载器隔离路线图落地 A2（vm 沙箱）**作为 Phase 2 前的止血：至少挡住原生模块与原型污染。
+> 状态更新（2026-08-10）：第 1-5 项已全部完成——
+> 1. `codeindex:prebuild` 通道错位已修复（`ipc-contract.test.ts` 自动对等断言上线，防再漂移）。
+> 2. 插件 capabilities 契约已冻结：`PluginManifest.capabilities` 强校验 + vm 沙箱能力门禁（`plugin-sandbox.ts`）。
+> 3. bridge 入参校验部分落地：流式通道全部带 rid 过滤 + 大小上限；zod 全量校验留待 ADR-003。
+> 4. 契约单测已覆盖：preload 暴露方法名 ↔ main handler 名的自动对等断言（`ipc-contract.test.ts`）。
+> 5. 插件加载器 A2（vm 沙箱）已作为止血上线；A1（UtilityProcess）为 Phase 2 目标。
+
+**下一批快赢候选**：
+- 渲染层组件覆盖率：换 `@vitest/coverage-istanbul` 或补 jsdom 组件测试，把 TSX 纳入覆盖率。
+- `Ctrl+P` 快速打开已恢复（打开即文件搜索模式）；文件树右键菜单、Problems/Git 点击跳转、diff 视图已上线（2026-08-10）。
 
 ---
 

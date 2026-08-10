@@ -102,6 +102,11 @@ export interface LoomAgentChatHandlers {
   onFileCreated?: (filePath: string, content: string) => void;
   onFileChanged?: (filePath: string, content: string) => void;
   onPlanAwait?: (planText: string, sid: string) => void;
+  /** The agent blocked on a delete/rename — the UI must show Approve/Reject. */
+  onDestructiveAwait?: (
+    request: { type: 'delete' | 'rename'; filePath: string; newPath?: string },
+    sid: string,
+  ) => void;
 }
 
 export interface LoomAgentChatOptions {
@@ -160,6 +165,8 @@ export interface LoomAI {
   getOrcaProviders: () => Promise<unknown[]>;
   approvePlan: (sid: string) => Promise<boolean>;
   rejectPlan: (sid: string) => Promise<boolean>;
+  approveDestructive: (sid: string) => Promise<boolean>;
+  rejectDestructive: (sid: string) => Promise<boolean>;
   /**
    * Reject a proposed agent edit. Returns { rejected, applied } — if
    * `applied` is true the change was already written to disk and must be
@@ -177,6 +184,10 @@ export interface LoomAI {
     onFileCreated?: (filePath: string, content: string) => void,
     onFileChanged?: (filePath: string, content: string) => void,
     onPlanAwait?: (planText: string, sid: string) => void,
+    onDestructiveAwait?: (
+      request: { type: 'delete' | 'rename'; filePath: string; newPath?: string },
+      sid: string,
+    ) => void,
     options?: LoomAgentChatOptions,
   ) => () => void;
   subAgentStream: (
@@ -444,6 +455,8 @@ export interface LoomGit {
   checkout: (cwd: string, branch: string) => Promise<boolean>;
   log: (cwd: string, count?: number) => Promise<string[]>;
   diff: (cwd: string, file?: string) => Promise<string>;
+  /** Original (HEAD or index) content of a file for the diff view; '' for untracked. */
+  show: (cwd: string, file: string) => Promise<string>;
 }
 
 export interface LoomTerminal {
@@ -467,11 +480,30 @@ export interface LoomShell {
   showItemInFolder?: (path: string) => void;
 }
 
+export interface LoomRunExitPayload {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  error?: string;
+  attempts?: number;
+}
+
 export interface LoomVerification {
   runCommand: (
     workspacePath: string,
     commandLine: string,
   ) => Promise<{ command: string } & DevelopmentCommandResult>;
+  /**
+   * Streaming run ("Run Without Debugging"). stdout/stderr chunks are delivered
+   * via `onOutput`; the final result arrives once on `onExit`. The returned
+   * function aborts the running command and unsubscribes.
+   */
+  runStream: (
+    workspacePath: string,
+    commandLine: string,
+    onOutput: (stream: 'stdout' | 'stderr', data: string) => void,
+    onExit: (result: LoomRunExitPayload) => void,
+  ) => () => void;
 }
 
 export interface LoomDebug {

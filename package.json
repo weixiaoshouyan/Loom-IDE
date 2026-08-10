@@ -15,7 +15,7 @@
     "test": "vitest run --root . src --config config/vite.config.ts",
     "test:run": "vitest run --root . src --config config/vite.config.ts",
     "test:watch": "vitest --root . src --config config/vite.config.ts",
-    "e2e": "playwright test tests/e2e/loom-smoke.spec.ts --config tests/e2e/playwright.config.ts",
+    "e2e": "playwright test tests/e2e --config tests/e2e/playwright.config.ts",
     "lint": "tsc -p config/tsconfig.json --noEmit && tsc -p config/tsconfig.main.json --noEmit && eslint --config config/eslint.config.mjs 'src/main/**/*.{ts,tsx}' 'src/agent/**/*.ts' 'src/shared/**/*.ts' 'src/renderer/**/*.{ts,tsx}'",
     "build": "tsc -p config/tsconfig.main.json && vite build --config config/vite.config.ts && electron-builder --win --publish=never",
     "build:publish": "tsc -p config/tsconfig.main.json && vite build --config config/vite.config.ts && electron-builder --win --publish=always",

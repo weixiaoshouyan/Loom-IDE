@@ -71,6 +71,45 @@ export function isAllowedDevelopmentCommand(command: string): boolean {
   return isCommandAllowed(command);
 }
 
+// ---------------------------------------------------------------------------
+// Argument-level policy (the command allow-list only checks the executable).
+// ---------------------------------------------------------------------------
+
+/** git subcommands that can destroy work or rewrite history, with the flag
+ *  pattern that makes them dangerous. The model may still need benign git
+ *  (status/diff/add/commit/push/checkout <branch>), so only the destructive
+ *  flag combinations are blocked. */
+const GIT_DANGEROUS_PATTERNS: Array<{ sub: string; test: (flags: string[]) => boolean; reason: string }> = [
+  { sub: 'clean', test: f => f.some(a => /^-/.test(a) && /[fFdDxX]/.test(a)), reason: 'clean -f/-d/-x discards untracked files irreversibly' },
+  { sub: 'reset', test: f => f.some(a => a === '--hard'), reason: 'reset --hard discards working-tree changes irreversibly' },
+  { sub: 'checkout', test: f => f.some(a => a === '--' || a === '.'), reason: 'checkout -- <path> discards working-tree changes' },
+  { sub: 'push', test: f => f.some(a => a === '--force' || a === '-f'), reason: 'push --force rewrites remote history' },
+  { sub: 'branch', test: f => f.some(a => a === '-D'), reason: 'branch -D deletes branches without confirmation' },
+  { sub: 'tag', test: f => f.some(a => a === '-d' || a === '--delete'), reason: 'tag -d deletes tags' },
+  { sub: 'rm', test: f => f.some(a => a === '-r' || a === '-rf' || a === '-fr'), reason: 'rm -r deletes files from disk and the index' },
+];
+
+/** Returns an error string if the git invocation is destructive; otherwise undefined. */
+export function validateGitArgs(command: string, args: string[]): string | undefined {
+  if (getCommandBaseName(command) !== 'git') return undefined;
+  const sub = (args[0] || '').toLowerCase();
+  for (const rule of GIT_DANGEROUS_PATTERNS) {
+    if (rule.sub === sub && rule.test(args.slice(1))) {
+      return `Git "${rule.sub}" with ${rule.reason}. This is blocked by policy — ask the user to run it manually.`;
+    }
+  }
+  return undefined;
+}
+
+/** Force npx to resolve packages from the local workspace only — never
+ *  silently download-and-execute from the npm registry. */
+export function normalizeCommandArgs(command: string, args: string[]): string[] {
+  if (getCommandBaseName(command) === 'npx' && !args.includes('--no-install')) {
+    return ['--no-install', ...args];
+  }
+  return args;
+}
+
 function getCommandBaseName(command: string): string {
   return path.basename(command.trim()).toLowerCase().replace(/\.(exe|cmd|bat)$/i, '');
 }
@@ -137,12 +176,21 @@ export function isWorkspacePath(candidate: string, workspacePath?: string): bool
 }
 
 export function runDevelopmentCommand(request: DevelopmentCommandRequest): DevelopmentCommandResult {
+  // Normalize once at the top so validation and spawn both see the same args
+  // (npx → force local resolution, never registry install).
+  request = { ...request, args: normalizeCommandArgs(request.command, request.args.map(String)) };
+
   if (!isAllowedDevelopmentCommand(request.command)) {
     return {
       exitCode: null,
       stdout: '',
       stderr: `Command "${request.command}" is not in the allowed development command list.`,
     };
+  }
+
+  const gitError = validateGitArgs(request.command, request.args.map(String));
+  if (gitError) {
+    return { exitCode: null, stdout: '', stderr: gitError };
   }
 
   const powerShellError = validatePowerShellArgs(request.command, request.args.map(String));
@@ -222,6 +270,8 @@ function validateDevelopmentCommandRequest(request: DevelopmentCommandRequest): 
   if (!isWorkspacePath(cwd, request.workspacePath)) {
     return `Working directory is outside workspace: ${cwd}`;
   }
+  const gitError = validateGitArgs(request.command, request.args.map(String));
+  if (gitError) return gitError;
   const powerShellError = validatePowerShellArgs(request.command, request.args.map(String));
   if (powerShellError) return powerShellError;
   return validateInterpreterArgs(request.command, request.args.map(String));
@@ -231,6 +281,8 @@ export async function runDevelopmentCommandStreaming(
   request: DevelopmentCommandRequest,
   onEvent?: (event: DevelopmentCommandEvent) => void,
 ): Promise<DevelopmentCommandResult & { history: DevelopmentCommandEvent[] }> {
+  // Same arg normalization as the sync path (npx → --no-install).
+  request = { ...request, args: normalizeCommandArgs(request.command, request.args.map(String)) };
   const taskId = request.taskId || createTaskId();
   const history: DevelopmentCommandEvent[] = [];
   const emit = (event: DevelopmentCommandEvent) => {
@@ -321,7 +373,12 @@ export async function runDevelopmentCommandStreaming(
     finalExitCode = result.exitCode;
     finalError = result.error;
 
-    const shouldRetry = attempt < maxAttempts && !request.abortSignal?.aborted && finalExitCode !== 0;
+    // Never retry a TIMEOUT: a hung command would otherwise replay up to
+    // retryCount+1 × timeoutMs (e.g. 3 × 10 min = 30 min of stuck agent turns).
+    // Timeouts return exitCode null with an error message — treat them as
+    // terminal, not as a retryable failure.
+    const timedOut = !!finalError && /timed out/i.test(finalError);
+    const shouldRetry = attempt < maxAttempts && !request.abortSignal?.aborted && !timedOut && finalExitCode !== 0;
     if (!shouldRetry) {
       return {
         taskId,

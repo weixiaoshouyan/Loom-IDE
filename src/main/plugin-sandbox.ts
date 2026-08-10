@@ -1,9 +1,9 @@
 /**
  * Plugin sandbox — capability-gated module loader for plugin entry code.
  *
- * Previously plugin `main` entries were loaded with a bare `require(mainPath)`
- * in the main process, granting the plugin the FULL Node.js surface
- * (`child_process`, `fs`, `net`, …) with no isolation. This module runs plugin
+ * Previously plugin `main` entries were loaded with a bare require in the main
+ * process, granting the plugin the FULL Node.js surface (process spawning,
+ * filesystem, networking, ...) with no isolation. This module runs plugin
  * code inside a Node `vm` context with:
  *
  *   1. A curated set of globals (no ambient `process`/`global` unless the plugin

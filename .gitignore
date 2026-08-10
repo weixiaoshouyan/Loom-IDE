@@ -20,6 +20,9 @@ release/
 # Local tool metadata (Reasonix sessions/topics — not project content)
 .reasonix/
 
+# Local security-scan history (Mimosa plugin) — not project content
+.mimosa/
+
 # Editor / OS
 .vscode/
 .idea/

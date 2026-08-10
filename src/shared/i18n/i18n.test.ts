@@ -52,4 +52,18 @@ describe('i18n framework', () => {
     setLocale('zh-CN');
     expect(t('menu.fileNewFile')).toBe('新建文件');
   });
+
+  it('interpolates {param} placeholders', () => {
+    setLocale('zh-CN');
+    expect(t('fileTree.deleteFileConfirm', { name: 'src/main.ts' }))
+      .toBe('确定删除 "src/main.ts"？');
+    setLocale('en-US');
+    expect(t('fileTree.deleteFileConfirm', { name: 'src/main.ts' }))
+      .toBe('Delete "src/main.ts"?');
+  });
+
+  it('leaves the key intact when params are missing', () => {
+    setLocale('zh-CN');
+    expect(t('fileTree.deleteFileConfirm')).toContain('{name}');
+  });
 });

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { confirmDialog } from './ConfirmModal';
+import { t } from '@/shared/i18n';
 
 export default function SidebarSearchView({ workspacePath, onOpenFile, locale }: {
   workspacePath: string; onOpenFile: (path: string, content: string) => void; locale?: 'zh-CN' | 'en-US';
@@ -111,11 +112,9 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
   const handleReplaceAll = useCallback(async () => {
     if (!query || !replaceQuery || results.length === 0 || !workspacePath) return;
     const ok = await confirmDialog.ask({
-      title: locale === 'zh-CN' ? '全部替换' : 'Replace All',
-      message: locale === 'zh-CN'
-        ? `确定在所有 ${results.length} 个文件中替换 "${query}" 为 "${replaceQuery}" 吗？(共 ${totalMatches} 处匹配)`
-        : `Replace "${query}" with "${replaceQuery}" in ${results.length} files? (${totalMatches} total matches)`,
-      confirmText: locale === 'zh-CN' ? '替换' : 'Replace',
+      title: t('search.replaceAllTitle'),
+      message: t('search.replaceConfirm', { files: results.length, query, replace: replaceQuery, matches: totalMatches }),
+      confirmText: t('search.replace'),
       danger: true,
     });
     if (!ok) return;
@@ -139,9 +138,7 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
     }
     setReplacing(false);
     window.dispatchEvent(new CustomEvent('loom:notify', {
-      detail: { message: locale === 'zh-CN'
-        ? `已替换 ${replacedCount} 个文件${failedCount > 0 ? `，${failedCount} 个失败` : ''}`
-        : `Replaced in ${replacedCount} files${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
+      detail: { message: t('search.replacedSummary', { done: replacedCount }) + (failedCount > 0 ? t('search.replacedFailSuffix', { failed: failedCount }) : ''),
         type: failedCount > 0 ? 'warn' : 'success' }
     }));
     if (replacedCount > 0) window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
@@ -175,13 +172,13 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
 
   return (
     <>
-      <div className="sidebar-header"><span>{locale === 'zh-CN' ? '全局搜索' : 'SEARCH'}</span></div>
+      <div className="sidebar-header"><span>{t('search.title')}</span></div>
       <div className="sidebar-content">
         <div className="search-panel">
           <div className="search-input-wrapper">
             <input
               className="search-input"
-              placeholder={locale === 'zh-CN' ? '搜索' : 'Search'}
+              placeholder={t('search.searchPlaceholder')}
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
@@ -201,10 +198,10 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
           {showReplace && (
             <div style={{ display: 'flex', gap: 4 }}>
               <div className="search-input-wrapper" style={{ flex: 1 }}>
-                <input className="search-input" placeholder={locale === 'zh-CN' ? '替换为' : 'Replace with'} value={replaceQuery} onChange={e => setReplaceQuery(e.target.value)} />
+                <input className="search-input" placeholder={t('search.replacePlaceholder')} value={replaceQuery} onChange={e => setReplaceQuery(e.target.value)} />
               </div>
               <button className="settings-btn-sm primary" onClick={handleReplaceAll} disabled={!replaceQuery || results.length === 0 || replacing} style={{ flexShrink: 0, fontSize: 11 }}>
-                {replacing ? '...' : locale === 'zh-CN' ? '全部替换' : 'Replace All'}
+                {replacing ? '...' : t('search.replaceAllButton')}
               </button>
             </div>
           )}
@@ -212,7 +209,7 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
             <input
               className="search-input"
               style={{ height: 24, fontSize: 11 }}
-              placeholder={locale === 'zh-CN' ? '文件过滤: *.ts,*.tsx' : 'files to include: *.ts,*.tsx'}
+              placeholder={t('search.fileFilterPlaceholder')}
               value={includePattern}
               onChange={e => setIncludePattern(e.target.value)}
             />
@@ -221,32 +218,30 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
             {searching && (
               <div className="panel-empty-state">
                 <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)' }}><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2"/></svg>
-                <div>{locale === 'zh-CN' ? '正在搜索...' : 'Searching...'}</div>
+                <div>{t('search.searching')}</div>
                 {searchProgress && (
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                    {locale === 'zh-CN'
-                      ? `已扫描 ${searchProgress.files} 个文件 · ${searchProgress.matched} 处匹配`
-                      : `${searchProgress.files} files scanned · ${searchProgress.matched} matches`}
+                    {t('search.scanProgress', { files: searchProgress.files, matched: searchProgress.matched })}
                   </div>
                 )}
               </div>
             )}
             {!searching && results.length === 0 && query && (
               <div className="panel-empty-state">
-                <div>{locale === 'zh-CN' ? '未找到结果' : 'No results found'}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '试试其他搜索词' : 'Try different search terms'}</div>
+                <div>{t('search.noResults')}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('search.noResultsHint')}</div>
               </div>
             )}
             {!searching && results.length === 0 && !query && (
               <div className="panel-empty-state">
                 <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)' }}><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2"/></svg>
-                <div>{locale === 'zh-CN' ? '全局搜索' : 'Search across files'}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '输入关键词以搜索' : 'Type to search in workspace'}</div>
+                <div>{t('search.title')}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('search.inputKeyword')}</div>
               </div>
             )}
             {!searching && results.length > 0 && (
               <div style={{ padding: '4px 8px', color: 'var(--text-muted)', fontSize: '11px', borderBottom: '1px solid var(--border)', marginBottom: '4px' }}>
-                {locale === 'zh-CN' ? `${totalMatches} 个匹配 · ${results.length} 个文件` : `${totalMatches} results in ${results.length} files`}
+                {t('search.resultSummary', { matches: totalMatches, files: results.length })}
               </div>
             )}
             {results.map((r, i) => {

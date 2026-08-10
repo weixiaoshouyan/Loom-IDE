@@ -7,6 +7,7 @@ interface Props {
   onSelect: (id: string) => void;
   onAccept: (id: string) => void;
   onReject: (id: string) => void;
+  locale?: 'zh-CN' | 'en-US';
 }
 
 function basename(filePath: string): string {
@@ -22,15 +23,16 @@ function changeStats(item: AgentReviewItem): { added: number; removed: number } 
   };
 }
 
-export default function AgentReviewQueue({ items, selectedId, onSelect, onAccept, onReject }: Props) {
+export default function AgentReviewQueue({ items, selectedId, onSelect, onAccept, onReject, locale = 'zh-CN' }: Props) {
   const pending = items.filter(item => item.status === 'pending').length;
   if (items.length === 0) return null;
+  const zh = locale === 'zh-CN';
 
   return (
-    <div className="agent-review-queue" aria-label="Agent review queue">
+    <div className="agent-review-queue" aria-label={zh ? 'Agent 修改审阅队列' : 'Agent review queue'}>
       <div className="agent-review-header">
-        <span className="agent-review-title">Review changes</span>
-        <span className="agent-review-count">{pending} pending</span>
+        <span className="agent-review-title">{zh ? '修改审阅' : 'Review changes'}</span>
+        <span className="agent-review-count">{pending} {zh ? '待处理' : 'pending'}</span>
       </div>
       <div className="agent-review-list">
         {items.map((item, index) => {
@@ -51,37 +53,37 @@ export default function AgentReviewQueue({ items, selectedId, onSelect, onAccept
               <div className="agent-review-item-main">
                 <span className="agent-review-status-dot" />
                 <span className="agent-review-file">{basename(item.filePath)}</span>
-                {!item.existed && <span className="agent-review-new">new</span>}
+                {!item.existed && <span className="agent-review-new">{zh ? '新建' : 'new'}</span>}
               </div>
               <div className="agent-review-meta">
                 <span className="agent-review-stats">+{stats.added} -{stats.removed}</span>
-                <span className="agent-review-state">{item.status}</span>
+                <span className="agent-review-state">{item.status === 'pending' ? (zh ? '待处理' : 'pending') : item.status === 'accepted' ? (zh ? '已接受' : 'accepted') : (zh ? '已拒绝' : 'rejected')}</span>
               </div>
               {item.status === 'pending' && (
                 <div className="agent-review-actions">
                   <button
                     type="button"
                     className="agent-review-reject"
-                    aria-label={`Reject ${basename(item.filePath)}`}
+                    aria-label={`${zh ? '拒绝' : 'Reject'} ${basename(item.filePath)}`}
                     data-testid="agent-review-reject"
                     onClick={event => {
                       event.stopPropagation();
                       onReject(item.id);
                     }}
                   >
-                    Reject
+                    {zh ? '拒绝' : 'Reject'}
                   </button>
                   <button
                     type="button"
                     className="agent-review-accept"
-                    aria-label={`Accept ${basename(item.filePath)}`}
+                    aria-label={`${zh ? '接受' : 'Accept'} ${basename(item.filePath)}`}
                     data-testid="agent-review-accept"
                     onClick={event => {
                       event.stopPropagation();
                       onAccept(item.id);
                     }}
                   >
-                    Accept
+                    {zh ? '接受' : 'Accept'}
                   </button>
                 </div>
               )}

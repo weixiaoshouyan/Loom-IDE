@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { t } from '@/shared/i18n';
 import { getLoom } from '../loom-ipc';
 
 interface Props {
@@ -250,8 +251,8 @@ Return ONLY the edited code in a single code block with the language marker. Do 
     onClose();
     const acceptedCount = hunks.filter(h => h.accepted).length;
     const msg = hunks.length > 0
-      ? `已应用 ${acceptedCount}/${hunks.length} 个变更块`
-      : '已应用 AI 编辑';
+      ? t('inlineEdit.appliedHunks', { accepted: acceptedCount, total: hunks.length })
+      : t('inlineEdit.appliedFallback');
     window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: msg, type: 'success' } }));
   }, [buildMergedCode, editorRef, onClose, hunks]);
 
@@ -294,17 +295,17 @@ Return ONLY the edited code in a single code block with the language marker. Do 
             <input
               ref={inputRef}
               className="inline-ai-input"
-              placeholder="描述你想做的修改... (例如：添加错误处理)"
+              placeholder={t('inlineEdit.placeholder')}
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={loading}
-              aria-label="AI 编辑指令"
+              aria-label={t('inlineEdit.instructionAria')}
             />
             <button className="inline-ai-submit-btn" onClick={handleSubmit} disabled={!prompt.trim() || loading}>
               Edit
             </button>
-            <button className="inline-ai-close-btn" onClick={onClose} aria-label="关闭">✕</button>
+            <button className="inline-ai-close-btn" onClick={onClose} aria-label={t('inlineEdit.closeAria')}>✕</button>
           </div>
         )}
 
@@ -312,11 +313,11 @@ Return ONLY the edited code in a single code block with the language marker. Do 
           <div className="inline-ai-streaming">
             <div className="inline-ai-streaming-header">
               <span className="inline-ai-icon">✨</span>
-              <span>AI 正在生成...</span>
+              <span>{t('inlineEdit.generating')}</span>
               <div className="inline-ai-spinner">
                 <span /><span /><span />
               </div>
-              <button className="inline-ai-close-btn" onClick={stopStreaming} aria-label="停止生成">✕</button>
+              <button className="inline-ai-close-btn" onClick={stopStreaming} aria-label={t('inlineEdit.stopAria')}>✕</button>
             </div>
             <div className="inline-ai-streaming-content">
               <pre><code>{response}</code></pre>
@@ -328,13 +329,13 @@ Return ONLY the edited code in a single code block with the language marker. Do 
           <div className="inline-ai-diff">
             <div className="inline-ai-diff-header">
               <span className="inline-ai-icon">✨</span>
-              <span>AI 建议</span>
+              <span>{t('inlineEdit.header')}</span>
               <span className="inline-ai-diff-stats">
                 <span style={{ color: 'var(--green)' }}>+{diffStats.added}</span>
                 <span style={{ color: 'var(--red)' }}>−{diffStats.removed}</span>
                 {hunks.length > 0 && (
                   <span style={{ color: 'var(--text-muted)' }}>
-                    · {acceptedCount}/{hunks.length} 块已接受
+                    · {t('inlineEdit.hunksAcceptedCount', { accepted: acceptedCount, total: hunks.length })}
                   </span>
                 )}
               </span>
@@ -344,27 +345,27 @@ Return ONLY the edited code in a single code block with the language marker. Do 
                     <button
                       className="inline-ai-diff-btn"
                       onClick={acceptAll}
-                      title="接受全部变更"
-                      aria-label="接受全部"
-                    >全部接受</button>
+                      title={t('inlineEdit.acceptAllTitle')}
+                      aria-label={t('inlineEdit.acceptAllAria')}
+                    >{t('inlineEdit.acceptAll')}</button>
                     <button
                       className="inline-ai-diff-btn"
                       onClick={rejectAll}
-                      title="拒绝全部变更"
-                      aria-label="拒绝全部"
-                    >全部拒绝</button>
+                      title={t('inlineEdit.rejectAllTitle')}
+                      aria-label={t('inlineEdit.rejectAllAria')}
+                    >{t('inlineEdit.rejectAll')}</button>
                   </>
                 )}
-                <button className="inline-ai-discard-btn" onClick={onClose}>✗ 取消</button>
+                <button className="inline-ai-discard-btn" onClick={onClose}>✗ {t('inlineEdit.cancel')}</button>
                 <button
                   className="inline-ai-apply-btn"
                   onClick={handleApply}
                   disabled={hunks.length > 0 && acceptedCount === 0}
-                  title="应用已接受的变更 (Enter)"
-                >✓ 应用</button>
+                  title={t('inlineEdit.applyTitle')}
+                >✓ {t('inlineEdit.apply')}</button>
               </div>
             </div>
-            <div className="inline-ai-diff-content" role="region" aria-label="代码差异预览">
+            <div className="inline-ai-diff-content" role="region" aria-label={t('inlineEdit.diffPreviewAria')}>
               {diffLines.length === 0 ? (
                 <pre><code>{response}</code></pre>
               ) : (
@@ -381,9 +382,9 @@ Return ONLY the edited code in a single code block with the language marker. Do 
                           <button
                             className={`inline-ai-hunk-btn ${h.accepted ? 'accepted' : ''}`}
                             onClick={() => toggleHunk(hunkIdx)}
-                            aria-label={h.accepted ? '取消接受此块' : '接受此块'}
+                            aria-label={h.accepted ? t('inlineEdit.markUnaccepted') : t('inlineEdit.markAccepted')}
                           >
-                            {h.accepted ? '✓ 已接受' : '接受此块'}
+                            {h.accepted ? `✓ ${t('inlineEdit.hunkAccepted')}` : t('inlineEdit.markAccepted')}
                           </button>
                         </div>
                       );
@@ -415,7 +416,7 @@ Return ONLY the edited code in a single code block with the language marker. Do 
             </div>
             <div className="inline-ai-diff-footer">
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                Enter 应用 · Esc 取消 · 点击「接受此块」逐段选择
+                {t('inlineEdit.hint')}
               </span>
             </div>
           </div>

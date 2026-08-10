@@ -459,6 +459,7 @@ export const zhCN = {
     unstage: '取消暂存',
     stageAll: '全部暂存',
     stage: '暂存',
+    viewDiff: '查看差异',
     branch: '分支',
     noProvider: '未注册源码控制提供商',
   },
@@ -634,6 +635,10 @@ export const zhCN = {
     runUnsupportedType: 'Run: 不支持的文件类型: .{ext}',
     runStartedFallback: 'Run: 已启动 {file}',
     runError: 'Run 错误: {msg}',
+    runStopped: 'Run: 已停止',
+    runFinished: 'Run: 进程正常退出 (code={code})',
+    runFailed: 'Run: 进程退出 (code={code}){msg}',
+    aboutMessage: 'Loom IDE v0.2.1 — AI 原生开发环境',
     debugNoSession: 'Debug: 没有正在进行的调试会话。',
     debugStopping: 'Debug: 停止中...',
     debugStopped: 'Debug: 已停止',
@@ -674,7 +679,6 @@ export const zhCN = {
 
   // ---- AI engine (ai-engine.ts) ----
   aiEngine: {
-    providerNoApiKey: 'Provider {name} 未配置 API Key',
     toolTurnsExhausted: '工具轮数已用完。请根据上方折叠的操作记录继续提问，或缩小任务范围后重试。',
   },
 

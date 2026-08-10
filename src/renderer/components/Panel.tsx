@@ -11,6 +11,8 @@ interface Props {
   problems: { severity: string; message: string; file?: string; line?: number }[];
   outputLines: string[];
   workspacePath?: string;
+  /** Clicking a Problems entry opens the file (and jumps to the line). */
+  onOpenFile?: (path: string, line?: number) => void;
 }
 
 // Safe expression evaluator for the Debug Console.
@@ -129,7 +131,7 @@ function safeEvaluateExpression(expr: string): number {
   return value;
 }
 
-function Panel({ visible, height, onClose, onResize, problems, outputLines, workspacePath }: Props) {
+function Panel({ visible, height, onClose, onResize, problems, outputLines, workspacePath, onOpenFile }: Props) {
   const [activeTab, setActiveTab] = useState('terminal');
   const [termCount, setTermCount] = useState(1);
   const [activeTerm, setActiveTerm] = useState(0);
@@ -199,15 +201,16 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
     setDebugInput('');
   }, [debugInput]);
 
-  if (!visible) return null;
-
+  // 面板收起时不卸载子树：终端/调试器等有状态组件（PTY 进程、xterm 会话）
+  // 必须跨收起/展开存活（VS Code 中终端不随面板关闭销毁）。用 display:none
+  // 隐藏而非 return null，Terminal 的 ResizeObserver 会在重新显示时恢复尺寸。
   const errorCount = problems.filter(p => p.severity === 'error').length;
   const warnCount = problems.filter(p => p.severity === 'warning').length;
 
   const termTabs = Array.from({ length: termCount }, (_, i) => i);
 
   return (
-    <div className="bottom-panel" style={{ height }}>
+    <div className="bottom-panel" style={{ height, display: visible ? undefined : 'none' }}>
       <div
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, cursor: 'row-resize', zIndex: 5 }}
         onMouseDown={(e) => {
@@ -361,7 +364,13 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               </div>
             ) : (
               problems.map((p, i) => (
-                <div key={i} className="tree-item" style={{ paddingLeft: 4, fontSize: 12, gap: 6 }}>
+                <div
+                  key={i}
+                  className="tree-item"
+                  style={{ paddingLeft: 4, fontSize: 12, gap: 6, cursor: p.file ? 'pointer' : 'default' }}
+                  title={p.file ? `${p.file}${p.line ? `:${p.line}` : ''}` : undefined}
+                  onClick={() => onOpenFile && p.file && onOpenFile(p.file, p.line)}
+                >
                   <span style={{ color: p.severity === 'error' ? 'var(--red)' : p.severity === 'warning' ? 'var(--yellow)' : 'var(--blue)', fontSize: 11, flexShrink: 0, fontWeight: 700 }}>
                     {p.severity === 'error' ? '●' : p.severity === 'warning' ? '▲' : 'ℹ'}
                   </span>

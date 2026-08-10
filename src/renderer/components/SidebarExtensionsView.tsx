@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import ExtensionMarketplace from './ExtensionMarketplace';
 import { confirmDialog } from './ConfirmModal';
+import { t } from '@/shared/i18n';
 
 export default function SidebarExtensionsView({ locale, workspacePath, onOpenFile }: { locale?: 'zh-CN' | 'en-US'; workspacePath?: string; onOpenFile?: (path: string, content: string) => void; }) {
   const [extensions, setExtensions] = useState<any[]>([]);
@@ -29,9 +30,9 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
 
   const uninstall = async (id: string) => {
     const ok = await confirmDialog.ask({
-      title: locale === 'zh-CN' ? '卸载扩展' : 'Uninstall Extension',
-      message: locale === 'zh-CN' ? `确认卸载扩展 "${id}"?` : `Uninstall extension "${id}"?`,
-      confirmText: locale === 'zh-CN' ? '卸载' : 'Uninstall',
+      title: t('extensions.uninstallExtension'),
+      message: t('extensions.uninstallConfirm', { id }),
+      confirmText: t('extensions.uninstall'),
       danger: true,
     });
     if (!ok) return;
@@ -60,7 +61,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
   const openSamplePlugin = async () => {
     // Create a sample plugin folder in workspace if available
     if (!workspacePath || !onOpenFile) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: locale === 'zh-CN' ? '请先打开一个文件夹' : 'Open a folder first', type: 'info' } }));
+      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: t('extensions.openFolderFirst'), type: 'info' } }));
       return;
     }
     const sep = workspacePath.includes('\\') ? '\\' : '/';
@@ -84,7 +85,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
       await window.loom.fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2));
       const mainJs = `// Loom plugin: registers a single command "sample.helloWorld"\nfunction activate(api) {\n  api.registerCommand('sample.helloWorld', () => {\n    api.showInformationMessage('Hello from Loom plugin!');\n  });\n  api.showInformationMessage('Sample plugin activated.');\n}\nmodule.exports = { activate };\n`;
       await window.loom.fs.writeFile(mainPath, mainJs);
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: locale === 'zh-CN' ? '已创建示例插件,请在下方点击"从文件夹安装"加载它' : 'Sample plugin created, use "Install from folder" to load', type: 'success' } }));
+      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: t('extensions.samplePluginCreated'), type: 'success' } }));
       onOpenFile(mainPath, mainJs);
     } catch (e: any) {
       window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: e.message, type: 'error' } }));
@@ -101,9 +102,9 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
   return (
     <>
       <div className="sidebar-header">
-        <span>{locale === 'zh-CN' ? '扩展' : 'EXTENSIONS'}</span>
+        <span>{t('extensions.title')}</span>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'none' }}>
-          {locale === 'zh-CN' ? `${enabledCount} / ${extensions.length} 已启用` : `${enabledCount} / ${extensions.length} enabled`}
+          {t('extensions.enabledCount', { enabled: enabledCount, total: extensions.length })}
         </span>
       </div>
       {/* Unified tab bar — Cursor/VSCode style */}
@@ -112,13 +113,13 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
           className={`ext-unified-tab ${extTab === 'marketplace' ? 'active' : ''}`}
           onClick={() => setExtTab('marketplace')}
         >
-          {locale === 'zh-CN' ? '市场' : 'Marketplace'}
+          {t('extensions.mark')}
         </button>
         <button
           className={`ext-unified-tab ${extTab === 'installed' ? 'active' : ''}`}
           onClick={() => { setExtTab('installed'); refresh(); }}
         >
-          {locale === 'zh-CN' ? '已安装' : 'Installed'} ({extensions.length})
+          {t('extensions.installed')} ({extensions.length})
         </button>
       </div>
 
@@ -133,7 +134,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
         <div style={{ padding: '8px 10px 4px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <input
             className="search-input"
-            placeholder={locale === 'zh-CN' ? '搜索已安装扩展' : 'Search installed'}
+            placeholder={t('extensions.searchInstalled')}
             value={filter}
             onChange={e => setFilter(e.target.value)}
             style={{ width: '100%' }}
@@ -144,25 +145,25 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
               style={{ flex: 1, fontSize: 11 }}
               onClick={installFromFile}
               disabled={busy === '__install__'}
-              title={locale === 'zh-CN' ? '从包含 package.json 的文件夹加载' : 'Install from a folder containing package.json'}
+              title={t('extensions.installFromFolderTitle')}
             >
-              {locale === 'zh-CN' ? '+ 从文件夹安装' : '+ Install from Folder'}
+              {t('extensions.installFromFolder')}
             </button>
             <button
               className="settings-btn-sm"
               style={{ fontSize: 11 }}
               onClick={openSamplePlugin}
-              title={locale === 'zh-CN' ? '在工作区创建示例插件' : 'Create a sample plugin in workspace'}
+              title={t('extensions.createSampleTitle')}
             >
-              {locale === 'zh-CN' ? '示例' : 'Sample'}
+              {t('extensions.createSample')}
             </button>
           </div>
         </div>
         <div style={{ padding: '0 6px' }}>
           {filtered.length === 0 ? (
             <div className="panel-empty-state">
-              <div>{locale === 'zh-CN' ? '未找到扩展' : 'No extensions'}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '点击"从文件夹安装"加载 .loom-sample-plugin' : 'Use "Install from Folder" to load a plugin'}</div>
+              <div>{t('extensions.noExtensions')}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('extensions.noExtensionsHint')}</div>
             </div>
           ) : filtered.map(ext => {
             const isExpanded = expanded === ext.id;
@@ -196,7 +197,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
                         style={{ color: 'var(--red)', fontSize: 10, padding: '2px 6px' }}
                         onClick={() => uninstall(ext.id)}
                         disabled={busy === ext.id}
-                      >{locale === 'zh-CN' ? '卸载' : 'Uninstall'}</button>
+                      >{t('extensions.uninstall')}</button>
                     )}
                   </div>
                 </div>

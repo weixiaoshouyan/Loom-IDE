@@ -14,7 +14,7 @@ import { toSaveFileResult } from './dialog-contract';
 
 // Set by index.ts after the window is created.
 let resolvedMainWindow: BrowserWindow | null = null;
-export function setMainWindowForDialog(w: BrowserWindow) { resolvedMainWindow = w; }
+export function setMainWindowForDialog(w: BrowserWindow | null) { resolvedMainWindow = w; }
 
 export function registerDialogHandlers() {
   ipcMain.handle('dialog:open-file', async () => {
@@ -69,6 +69,13 @@ export function registerDialogHandlers() {
       if (!stat.isDirectory()) return { ok: false, message: 'Path is not a directory' };
       const realFolder = fs.realpathSync(folder);
       if (!canAccess(realFolder)) {
+        // TEST-ONLY ESCAPE HATCH: the Playwright e2e suite boots the app with
+        // E2E=1 and drives openFolderByPath via window.loom; a native dialog
+        // cannot be automated. Never set in production runs.
+        if (process.env.E2E === '1') {
+          grantRoot(realFolder);
+          return { ok: true, folder: realFolder };
+        }
         if (!resolvedMainWindow || resolvedMainWindow.isDestroyed()) {
           return { ok: false, message: 'No window to confirm path authorization.' };
         }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { t } from '@/shared/i18n';
 import { getWelcomeActions, getWelcomeShortcuts } from '../welcome-content';
 import { getLoom } from '../loom-ipc';
 
@@ -70,24 +71,22 @@ export default function WelcomePage({
         </div>
         <h1 className="welcome-title">Loom IDE</h1>
         <p className="welcome-tagline">
-          {locale === 'zh-CN'
-            ? 'AI 原生的代码工作台：计划、修改、审核、验证，一条链路完成。'
-            : 'An AI-native coding workspace for planning, editing, review, and verification.'}
+          {t('welcome.tagline')}
         </p>
 
         <div className="welcome-ai-status">
           <span className="welcome-ai-chip">
             <span className="welcome-ai-chip-dot" />
-            {aiInfo ? `${aiInfo.provider || '未配置'} · ${aiInfo.model || '—'}` : '未配置模型'}
+            {aiInfo ? `${aiInfo.provider || t('welcome.notConfigured')} · ${aiInfo.model || '—'}` : t('agent.modelNotConfigured')}
           </span>
           {rulesActive && (
-            <span className="welcome-ai-chip rules" title="本工作区 AI 规则 (.loomrules) 已生效">
+            <span className="welcome-ai-chip rules" title={t('welcome.rulesActiveTitleLoomrules')}>
               <span className="welcome-ai-chip-dot rules" />
-              规则生效
+              {t('welcome.rulesActiveChip')}
             </span>
           )}
           <button className="welcome-ai-setup" onClick={() => onOpenSettings()}>
-            {locale === 'zh-CN' ? '配置模型' : 'Setup Model'}
+            {t('welcome.configureModel')}
           </button>
         </div>
 
@@ -113,11 +112,11 @@ export default function WelcomePage({
         <div className="welcome-ai-strip">
           <button onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'toggleAI' }))}>
             <span className="welcome-dot" />
-            {locale === 'zh-CN' ? '打开 Agent' : 'Open Agent'}
+            {t('welcome.openAgent')}
             <kbd>Ctrl+L</kbd>
           </button>
           <button onClick={() => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'inlineAI' } }))}>
-            {locale === 'zh-CN' ? '内联 AI 编辑' : 'Inline AI Edit'}
+            {t('welcome.inlineEdit')}
             <kbd>Ctrl+K</kbd>
           </button>
         </div>
@@ -125,7 +124,7 @@ export default function WelcomePage({
 
       <div className="welcome-lower">
         <section className="welcome-panel">
-          <div className="welcome-panel-title">{locale === 'zh-CN' ? '最近项目' : 'Recent Projects'}</div>
+          <div className="welcome-panel-title">{t('welcome.recentProjects')}</div>
           {recentFolders.length > 0 ? (
             <div className="welcome-recent-list">
               {recentFolders.slice(0, 5).map(folder => (
@@ -136,12 +135,12 @@ export default function WelcomePage({
               ))}
             </div>
           ) : (
-            <div className="welcome-empty">{locale === 'zh-CN' ? '还没有最近项目。打开一个文件夹后会显示在这里。' : 'No recent projects yet.'}</div>
+            <div className="welcome-empty">{t('welcome.noRecentProjects')}</div>
           )}
         </section>
 
         <section className="welcome-panel">
-          <div className="welcome-panel-title">{locale === 'zh-CN' ? '高频快捷键' : 'Key Shortcuts'}</div>
+          <div className="welcome-panel-title">{t('welcome.highFreqKeys')}</div>
           <div className="welcome-shortcuts-grid">
             {shortcuts.map(shortcut => (
               <div key={shortcut.key} className="welcome-shortcut-row">

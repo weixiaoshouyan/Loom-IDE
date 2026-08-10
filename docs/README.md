@@ -8,6 +8,8 @@ Loom IDE 是一款对标 Cursor 的本地 AI 原生开发环境。基于 Electro
 - 多 Provider 配置，兼容 OpenAI / OpenAI-Compatible API，支持内置预设与自定义 Provider
 - Orca 代理模式：本地 agent 路由 `http://127.0.0.1:18080`
 - Agent 模式：文件读写/搜索/列表/命令执行工具 + 可审查 diff 预览，sub-agent 协作，planner 审批
+- **delete/rename 真实审批**：破坏性操作阻塞等待用户在 AI 面板确认，模型无法自证放行
+- **对话压缩**：接近 token 预算时自动总结早期对话，长任务不中断
 - **@-mention 文件引用**：输入 `@` 触发文件搜索，支持 `@relativePath` 插入文件上下文
 - **@codebase 语义检索**：基于 Tree-sitter 代码索引的符号搜索
 - **InlineAIEdit 逐块 diff**：LCS 动态规划 diff，支持 hunk 级别接受/拒绝
@@ -16,15 +18,19 @@ Loom IDE 是一款对标 Cursor 的本地 AI 原生开发环境。基于 Electro
 
 ### 编辑器 & 工作区
 - Monaco 编辑器、多标签页、分屏编辑（状态持久化）
-- 文件树、全局搜索（可取消 + 进度显示 + 协程让步）、Git 面板、终端、本地历史、笔记、代码片段
+- 文件树（右键菜单：新建/重命名/删除/复制路径）、全局搜索（可取消 + 进度显示 + 协程让步）、Git 面板（变更点击打开 + Monaco diff 视图）、终端（生命周期独立于面板收起）、本地历史、笔记、代码片段
+- Problems 面板点击跳转文件/行；Ctrl+P 快速打开
 - 主题切换（深色/浅色/跟随系统）
 - 统一确认 Modal 替代原生 `window.confirm`（支持 Esc 取消/Enter 确认/点击遮罩取消）
 
 ### 安全 & 性能
 - Symlink 逃逸防护：`fs.realpathSync` 二次校验
-- IPC 路径权限校验：`canAccess` + realpath 双重校验
+- IPC 路径权限校验：`canAccess` + realpath 双重校验（Agent 工具与 IPC 共用同一权限存储）
 - 对话框二次确认：高危操作（删除/卸载/替换）原生 dialog 确认
-- Git/CodeIndex handler 权限校验
+- 命令策略：allow/block 双清单 + 解释器内联代码拦截 + git 高危参数拦截 + npx 强制本地解析
+- 插件 vm 沙箱：能力门禁 require + 原型污染防护
+- 工作区内容（RAG/规则）仅以 user 消息注入，不进 system prompt（防提示注入）
+- 内联补全 700ms 真 debounce + 流式可取消；静态诊断异步执行不阻塞主进程
 - Plan 审批 abort signal：关窗自动 reject
 - 事件循环阻塞防护：搜索协程让步（每 20 文件/50ms 释放）
 - Disposable 清理：Editor model 监听器统一释放

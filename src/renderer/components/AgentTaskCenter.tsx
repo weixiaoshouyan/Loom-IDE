@@ -85,7 +85,7 @@ export default function AgentTaskCenter({ tasks, onRefresh, onCancel, onRetry, o
               <div className="agent-task-summary">{summarize(task)}</div>
               <div className="agent-task-meta">
                 <span>{task.history.length} 个事件</span>
-                {typeof task.result?.exitCode !== 'undefined' && <span>exit {task.result?.exitCode ?? 'null'}</span>}
+                {typeof task.result?.exitCode !== 'undefined' && <span>退出码 {task.result?.exitCode ?? 'null'}</span>}
                 {task.finishedAt && <span>{new Date(task.finishedAt).toLocaleTimeString()}</span>}
               </div>
               <div className="agent-task-actions">

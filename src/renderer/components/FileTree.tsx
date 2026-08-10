@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getFileIcon } from './FileIcons';
 import { confirmDialog } from './ConfirmModal';
+import { t } from '@/shared/i18n';
 
 interface FileEntry {
   name: string;
@@ -78,12 +79,12 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, gitStatusMap, worksp
       try {
         const content = await window.loom.fs.readFile(entry.path);
         if (typeof content === 'string' && content.startsWith('__ERR__:')) {
-          window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${locale === 'zh-CN' ? '无法打开文件' : 'Cannot open file'}: ${content.slice('__ERR__:'.length)}`, type: 'error' } }));
+          window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${t('fileTree.cannotOpenFile')}: ${content.slice('__ERR__:'.length)}`, type: 'error' } }));
           return;
         }
         onOpenFile(entry.path, content);
       } catch (e: any) {
-        window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${locale === 'zh-CN' ? '无法打开文件' : 'Cannot open file'}: ${e.message}`, type: 'error' } }));
+        window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${t('fileTree.cannotOpenFile')}: ${e.message}`, type: 'error' } }));
       }
     }
   }, [entry, expanded, loaded, loadChildren, onOpenFile]);
@@ -108,19 +109,19 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, gitStatusMap, worksp
       await window.loom.fs.rename(entry.path, newPath);
       window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${locale === 'zh-CN' ? '重命名失败' : 'Rename failed'}: ${e.message}`, type: 'error' } }));
+      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${t('fileTree.renameFailed')}: ${e.message}`, type: 'error' } }));
     }
     setRenaming(false);
   };
 
   const handleDelete = async () => {
     const confirmMsg = entry.isDirectory
-      ? (locale === 'zh-CN' ? `确定删除文件夹 "${entry.name}" 及其所有内容？` : `Delete folder "${entry.name}" and all its contents?`)
-      : (locale === 'zh-CN' ? `确定删除 "${entry.name}"？` : `Delete "${entry.name}"?`);
+      ? t('fileTree.deleteFolderConfirm', { name: entry.name })
+      : t('fileTree.deleteFileConfirm', { name: entry.name });
     const ok = await confirmDialog.ask({
-      title: locale === 'zh-CN' ? '删除' : 'Delete',
+      title: t('fileTree.delete'),
       message: confirmMsg,
-      confirmText: locale === 'zh-CN' ? '删除' : 'Delete',
+      confirmText: t('fileTree.delete'),
       danger: true,
     });
     if (!ok) return;
@@ -128,7 +129,7 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, gitStatusMap, worksp
       await window.loom.fs.deletePath(entry.path);
       window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${locale === 'zh-CN' ? '删除失败' : 'Delete failed'}: ${e.message}`, type: 'error' } }));
+      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${t('fileTree.deleteFailed')}: ${e.message}`, type: 'error' } }));
     }
   };
 
@@ -149,23 +150,23 @@ function TreeItem({ entry, depth, onOpenFile, selectedFile, gitStatusMap, worksp
 
   const ctxItems = entry.isDirectory
     ? [
-        { label: locale === 'zh-CN' ? '新建文件...' : 'New File...', action: () => window.dispatchEvent(new CustomEvent('loom:create-in-directory', { detail: { directory: entry.path, kind: 'file' } })) },
-        { label: locale === 'zh-CN' ? '新建文件夹...' : 'New Folder...', action: () => window.dispatchEvent(new CustomEvent('loom:create-in-directory', { detail: { directory: entry.path, kind: 'folder' } })) },
+        { label: t('fileTree.newFileMenu'), action: () => window.dispatchEvent(new CustomEvent('loom:create-in-directory', { detail: { directory: entry.path, kind: 'file' } })) },
+        { label: t('fileTree.newFolderMenu'), action: () => window.dispatchEvent(new CustomEvent('loom:create-in-directory', { detail: { directory: entry.path, kind: 'folder' } })) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '复制路径' : 'Copy Path', action: () => navigator.clipboard?.writeText(entry.path) },
-        { label: locale === 'zh-CN' ? '在文件管理器中显示' : 'Reveal in File Manager', action: () => window.loom?.shell?.showItemInFolder?.(entry.path) },
-        { label: locale === 'zh-CN' ? '重命名' : 'Rename', action: () => setRenaming(true) },
+        { label: t('fileTree.copyPath'), action: () => navigator.clipboard?.writeText(entry.path) },
+        { label: t('fileTree.showInManager'), action: () => window.loom?.shell?.showItemInFolder?.(entry.path) },
+        { label: t('fileTree.rename'), action: () => setRenaming(true) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '删除' : 'Delete', action: () => handleDelete() },
+        { label: t('fileTree.delete'), action: () => handleDelete() },
       ]
     : [
-        { label: locale === 'zh-CN' ? '打开' : 'Open', action: handleClick },
-        { label: locale === 'zh-CN' ? '重命名' : 'Rename', action: () => setRenaming(true) },
+        { label: t('fileTree.open'), action: handleClick },
+        { label: t('fileTree.rename'), action: () => setRenaming(true) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '复制路径' : 'Copy Path', action: () => navigator.clipboard?.writeText(entry.path) },
-        { label: locale === 'zh-CN' ? '复制相对路径' : 'Copy Relative Path', action: () => navigator.clipboard?.writeText(entry.name) },
+        { label: t('fileTree.copyPath'), action: () => navigator.clipboard?.writeText(entry.path) },
+        { label: t('fileTree.copyRelativePath'), action: () => navigator.clipboard?.writeText(entry.name) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '删除' : 'Delete', action: () => handleDelete() },
+        { label: t('fileTree.delete'), action: () => handleDelete() },
       ];
 
   return (
@@ -287,8 +288,8 @@ export function OutlineView({ filePath, onOpenFile, locale = 'zh-CN' }: { filePa
   if (!filePath) {
     return (
       <div className="panel-empty-state">
-        <div>{locale === 'zh-CN' ? '大纲为空' : 'No outline'}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '打开代码文件查看其大纲' : 'Open a code file to see its outline'}</div>
+        <div>{t('fileTree.outlineEmpty')}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('fileTree.openCodeFileForOutline')}</div>
       </div>
     );
   }
@@ -296,8 +297,8 @@ export function OutlineView({ filePath, onOpenFile, locale = 'zh-CN' }: { filePa
   if (symbols.length === 0) {
     return (
       <div className="panel-empty-state">
-        <div>{locale === 'zh-CN' ? '未找到符合' : 'No symbols found'}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '打开代码文件查看大纲' : 'Open a code file to see its outline'}</div>
+        <div>{t('fileTree.noOutlineMatch')}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('fileTree.openCodeFileForOutline')}</div>
       </div>
     );
   }
@@ -366,21 +367,21 @@ export default function FileTree({ workspacePath, onOpenFile, selectedFile, gitS
   if (!workspacePath) {
     return (
       <div className="panel-empty-state">
-        <div>{locale === 'zh-CN' ? '未打开文件夹' : 'No folder opened'}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{locale === 'zh-CN' ? '打开文件夹开始浏览' : 'Open a folder to explore files'}</div>
+        <div>{t('fileTree.noFolderOpened')}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('fileTree.openFolderToBrowse')}</div>
       </div>
     );
   }
   if (entries.length === 0) {
     return (
       <div className="panel-empty-state">
-        <div>{locale === 'zh-CN' ? '空文件夹' : 'Empty folder'}</div>
+        <div>{t('fileTree.emptyFolder')}</div>
       </div>
     );
   }
 
   return (
-    <div className="file-tree" role="tree" aria-label={locale === 'zh-CN' ? '文件树' : 'File Tree'}>
+    <div className="file-tree" role="tree" aria-label={t('fileTree.fileTreeAria')}>
       {entries.map(entry => (
         <TreeItem
           key={entry.path}

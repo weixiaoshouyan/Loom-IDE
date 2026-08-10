@@ -122,8 +122,11 @@ export function registerConversationHandlers() {
         matchScore: number;
       }> = [];
       for (const f of files) {
+        // f comes from readdirSync (plain names), but resolve + boundary-check
+        // anyway so a crafted name can never escape conversationsDir.
+        const fp = path.resolve(conversationsDir, f);
+        if (fp !== conversationsDir && !fp.startsWith(conversationsDir + path.sep)) continue;
         try {
-          const fp = path.join(conversationsDir, f);
           const stat = fs.statSync(fp);
           const data = JSON.parse(fs.readFileSync(fp, 'utf-8'));
           const messages: any[] = data.messages || [];

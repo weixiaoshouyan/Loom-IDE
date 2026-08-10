@@ -135,6 +135,24 @@ export function registerGitHandlers() {
       return await runGit(cwd, args);
     } catch { return ''; }
   });
+
+  // Original (HEAD or index) content of a file — feeds the diff view. Returns
+  // '' for untracked files. `file` must be a workspace-relative git path.
+  ipcMain.handle('git:show', async (_e: any, cwd: string, file: string) => {
+    try {
+      if (!ensurePathAllowedSafe(cwd)) return '';
+      const rel = String(file || '').replace(/\\/g, '/');
+      // SECURITY: reject traversal segments — the file must stay inside the repo.
+      if (!rel || rel.startsWith('/') || rel.split('/').includes('..')) return '';
+      if (!ensurePathAllowedSafe(path.resolve(cwd, rel))) return '';
+      try {
+        return await runGit(cwd, ['show', `HEAD:${rel}`]);
+      } catch {
+        // Not committed yet — try the index (staged new file).
+        return await runGit(cwd, ['show', `:${rel}`]);
+      }
+    } catch { return ''; }
+  });
 }
 
 // Local wrapper so this module doesn't throw on ungranted paths (handlers return

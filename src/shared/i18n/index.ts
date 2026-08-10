@@ -80,12 +80,22 @@ export function getPersistedLocale(): Locale | null {
  * Translate a key. Supports dot-path nesting (e.g. 'sidebar.explorer').
  * Falls back to English, then to the raw key itself, so missing translations
  * never crash the UI.
+ *
+ * Optional params interpolate `{name}` placeholders in the resource string:
+ *   t('fileTree.deleteFileConfirm', { name: 'src/main.ts' })
+ *   → '确定删除 "src/main.ts"？'
  */
-export function t(key: string): string {
+export function t(key: string, params?: Record<string, string | number>): string {
   const value = lookup(key, _locale)
     ?? lookup(key, 'en-US')
     ?? '';
-  return value || key;
+  let out = value || key;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      out = out.split(`{${k}}`).join(String(v));
+    }
+  }
+  return out;
 }
 
 function lookup(key: string, locale: Locale): string | undefined {

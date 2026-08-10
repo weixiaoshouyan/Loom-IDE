@@ -7,7 +7,7 @@
 import { ipcMain } from 'electron';
 import fs from 'fs';
 
-let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean } } | null = null;
+let resolvedMainWindow: { webContents: { send: (...args: any[]) => void; isDestroyed: () => boolean }; isDestroyed: () => boolean } | null = null;
 export function setMainWindowForWatcher(w: any) { resolvedMainWindow = w; }
 
 let fileWatcher: fs.FSWatcher | null = null;
@@ -15,8 +15,15 @@ let watchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const watchedPaths = new Set<string>();
 
 function sendToRenderer(channel: string, ...args: any[]) {
-  const wc = resolvedMainWindow?.webContents;
-  if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  try {
+    const win = resolvedMainWindow;
+    if (!win) return;
+    // Window may be destroyed while a watcher event is in flight — reading
+    // `.webContents` on a destroyed BrowserWindow throws.
+    if (typeof win.isDestroyed === 'function' && win.isDestroyed()) return;
+    const wc = win.webContents;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* window destroyed mid-send — drop the event */ }
 }
 
 // Ignore build artifacts and dependency directories to reduce event/handle

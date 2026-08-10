@@ -20,6 +20,7 @@ import { closeWorkspaceState, fsReadErrorMessage, inferWorkspaceFromOpenFiles, i
 import { clampAssistantPanelWidth } from './assistant-panel';
 import { detectLang, loadLayout, saveLayout, loadPanelState, savePanelState, loadSession, saveSession, extMap, type SavedLayout } from './app-storage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { t, setLocale as setI18nLocale } from '@/shared/i18n';
 
 export interface OpenFile {
   path: string;
@@ -100,8 +101,9 @@ export default function App() {
   }, []);
 
   // Keep the i18n framework locale in sync with the app's React state locale.
+  // Note: must use the ES module import — `require()` is undefined in the
+  // sandboxed renderer (sandbox: true, nodeIntegration: false) and would throw.
   const syncI18nLocale = useCallback((loc: string) => {
-    const { setLocale: setI18nLocale } = require('@/shared/i18n');
     setI18nLocale(loc === 'zh-CN' ? 'zh-CN' : 'en-US');
   }, []);
 
@@ -245,11 +247,11 @@ export default function App() {
       staleFilesRef.current.delete(filePath);
       setStaleVersion(v => v + 1);
       window.dispatchEvent(new CustomEvent('loom:notify', {
-        detail: { message: `已从磁盘重新加载: ${filePath.split(/[\\/]/).pop()}`, type: 'info' },
+        detail: { message: t('app.reloadedFromDisk', { file: filePath.split(/[\\/]/).pop() ?? '' }), type: 'info' },
       }));
     } catch (e: any) {
       window.dispatchEvent(new CustomEvent('loom:notify', {
-        detail: { message: `重新加载失败: ${e.message}`, type: 'error' },
+        detail: { message: t('app.reloadFailed', { msg: e.message }), type: 'error' },
       }));
     }
   }, []);
@@ -422,18 +424,18 @@ export default function App() {
       const result = await window.loom.dialog.openFolderByPath(folder);
       if (result.ok && result.folder) {
         setWorkspace(result.folder);
-        addNotification(`已打开: ${result.folder.split(/[\\/]/).pop()}`, 'info', 2500);
+        addNotification(t('app.folderOpened', { folder: result.folder.split(/[\\/]/).pop() ?? '' }), 'info', 2500);
       } else {
-        addNotification(`无法打开文件夹: ${result.message || folder}`, 'error', 4000);
+        addNotification(t('app.cannotOpenFolder', { folder: result.message || folder }), 'error', 4000);
       }
     } catch {
-      addNotification(`无法打开文件夹: ${folder}`, 'error', 4000);
+      addNotification(t('app.cannotOpenFolder', { folder }), 'error', 4000);
     }
   }, [addNotification]);
 
   const addOrFocusFile = useCallback((filePath: string, content: string) => {
     if (isFsReadError(content)) {
-      addNotification(`无法打开文件: ${fsReadErrorMessage(content)}`, 'error', 6000);
+      addNotification(t('app.cannotOpenFile', { file: fsReadErrorMessage(content) }), 'error', 6000);
       return;
     }
     setOpenFiles(prev => {
@@ -446,13 +448,29 @@ export default function App() {
     });
   }, [activeIdx, addNotification]);
 
+  // Problems 面板点击：打开文件并跳转到对应行（首次打开时等编辑器挂载再跳）。
+  const openFileAndJump = useCallback(async (filePath: string, line?: number) => {
+    const base = workspace ? workspace.replace(/[\\/]+$/, '') : '';
+    const abs = filePath.startsWith(workspace) || !base ? filePath : base + '/' + filePath;
+    try {
+      const content = await window.loom.fs.readFile(abs);
+      if (isFsReadError(content)) return;
+      addOrFocusFile(abs, content);
+      if (line && line > 0) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line } }));
+        }, 80);
+      }
+    } catch { /* file may have moved */ }
+  }, [workspace, addOrFocusFile]);
+
   const closeWorkspace = useCallback(async () => {
     const dirty = openFiles.filter(f => isFileDirty(f.content, f.originalContent));
     if (dirty.length > 0) {
       const ok = await confirmDialog.ask({
-        title: '关闭文件夹',
-        message: `${dirty.length} 个文件有未保存的修改。确定关闭？`,
-        confirmText: '关闭',
+        title: t('app.closeFolderTitle'),
+        message: t('app.closeFolderConfirm', { count: dirty.length }),
+        confirmText: t('app.close'),
         danger: true,
       });
       if (!ok) return;
@@ -465,7 +483,7 @@ export default function App() {
     setSplitMode(false);
     setAiOpen(false);
     setSidebarView('explorer');
-    addNotification('已关闭当前文件夹', 'info', 2500);
+    addNotification(t('app.folderClosed'), 'info', 2500);
   }, [openFiles, addNotification]);
 
   const createUntitledFile = useCallback(() => {
@@ -496,9 +514,9 @@ export default function App() {
           ? { ...x, path: newPath, name: newName, originalContent: f.content }
           : x));
         setSelectedFile(newPath);
-        addNotification(`已保存: ${newName}`, 'success');
+        addNotification(t('app.fileSaved', { file: newName }), 'success');
       } catch (e: any) {
-        addNotification(`另存为失败: ${e.message}`, 'error');
+        addNotification(t('app.saveAsFailed', { msg: e.message }), 'error');
       }
       return;
     }
@@ -506,7 +524,7 @@ export default function App() {
       // DATA-SAFETY: never write session-truncated content back over the real
       // on-disk file — that would permanently destroy the original text.
       if (f.contentTruncated) {
-        addNotification(`「${f.name}」的内容因会话恢复被截断，已阻止保存（防止覆盖磁盘原文件）。请关闭后重新打开该文件再保存。`, 'error');
+        addNotification(t('app.saveBlockedTruncated', { name: f.name }), 'error');
         return;
       }
       await window.loom.fs.writeFile(f.path, f.content);
@@ -515,9 +533,9 @@ export default function App() {
       // 记录保存时间戳，让 watcher 在 1.5s 内忽略该路径的 stale 标记
       recentlySavedRef.current.set(f.path, Date.now());
       setStaleVersion(v => v + 1);
-      addNotification(`已保存: ${f.name}`, 'success');
+      addNotification(t('app.fileSaved', { file: f.name }), 'success');
     } catch (e: any) {
-      addNotification(`保存失败 ${f.name}: ${e.message}`, 'error');
+      addNotification(t('app.saveFailed', { file: f.name, msg: e.message }), 'error');
     }
   }, [addNotification]);
 
@@ -526,7 +544,7 @@ export default function App() {
     const currentFiles = openFilesRef.current;
     const filesToSave = currentFiles.filter(f => isFileDirty(f.content, f.originalContent));
     if (filesToSave.length === 0) {
-      addNotification('没有需要保存的文件', 'info');
+      addNotification(t('app.nothingToSave'), 'info');
       return;
     }
     const failed: string[] = [];
@@ -536,7 +554,7 @@ export default function App() {
         if (f.contentTruncated) {
           // DATA-SAFETY: same guard as saveFile — truncated session content
           // must never overwrite the real file on disk.
-          failed.push(`${f.name}（会话截断，已阻止保存）`);
+          failed.push(t('app.saveBlockedTruncatedShort', { name: f.name }));
           continue;
         }
         if (!f.path || f.path.startsWith('untitled-')) {
@@ -565,9 +583,9 @@ export default function App() {
       saved.forEach(p => recentlySavedRef.current.set(p, now));
     }
     if (failed.length > 0) {
-      addNotification(`保存失败: ${failed.length} 个文件`, 'error');
+      addNotification(t('app.someSaveFailed', { count: failed.length }), 'error');
     } else {
-      addNotification(`已保存 ${saved.length} 个文件`, 'success');
+      addNotification(t('app.someSaveSucceeded', { count: saved.length }), 'success');
     }
   }, [openFiles, addNotification]);
 
@@ -580,11 +598,11 @@ export default function App() {
     setPanelVisible(true);
     window.dispatchEvent(new CustomEvent('loom:open-panel-tab', { detail: 'output' }));
     const f = openFilesRef.current[activeIdxRef.current];
-    if (!f) { addOutput('Debug: 请先打开一个文件。'); return; }
-    if (!workspace) { addOutput('Debug: 请先打开一个文件夹。'); return; }
-    if (isDebugging) { addOutput('Debug: 已有调试会话在进行中。'); return; }
+    if (!f) { addOutput(t('app.debugOpenFileFirst')); return; }
+    if (!workspace) { addOutput(t('app.debugOpenFolderFirst')); return; }
+    if (isDebugging) { addOutput(t('app.debugSessionRunning')); return; }
 
-    addOutput(`Debug: 启动调试 ${f.path}...`);
+    addOutput(t('app.debugStarting', { file: f.path }));
     try {
       if (debugCleanupRef.current) {
         debugCleanupRef.current();
@@ -592,13 +610,13 @@ export default function App() {
       }
       const result = await window.loom.debug?.start?.(f.path, workspace);
       if (result?.ok) {
-        addOutput('Debug: ' + (result.message || '已启动 (port 9229)'));
+        addOutput('Debug: ' + (result.message || t('app.debugStartedFallback')));
         setIsDebugging(true);
         const cleanupFns: (() => void)[] = [];
         const removeStdout = window.loom.debug?.onStdout?.((data: string) => addOutput('[stdout] ' + data.trim()));
         const removeStderr = window.loom.debug?.onStderr?.((data: string) => addOutput('[stderr] ' + data.trim()));
         const removeExit = window.loom.debug?.onExit?.((code: number | null) => {
-          addOutput(`Debug: 进程退出 (code=${code})`);
+          addOutput(t('app.debugProcessExited', { code: String(code) }));
           setIsDebugging(false);
         });
         if (removeStdout) cleanupFns.push(removeStdout);
@@ -606,57 +624,80 @@ export default function App() {
         if (removeExit) cleanupFns.push(removeExit);
         debugCleanupRef.current = () => cleanupFns.forEach(fn => fn());
       } else {
-        addOutput('Debug: 启动失败 - ' + (result?.message || '未知错误'));
+        addOutput(t('app.debugStartFailed') + (result?.message || t('app.debugUnknownError')));
       }
     } catch (e: any) {
-      addOutput('Debug 错误: ' + e.message);
+      addOutput(t('app.debugError') + e.message);
     }
   }, [workspace, isDebugging]);
+
+  const runAbortRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => { runAbortRef.current?.(); runAbortRef.current = null; };
+  }, []);
 
   const runCurrentFile = useCallback(async () => {
     setPanelVisible(true);
     window.dispatchEvent(new CustomEvent('loom:open-panel-tab', { detail: 'output' }));
     const f = openFilesRef.current[activeIdxRef.current];
-    if (!f) { addOutput('Run: 请先打开一个文件。'); return; }
-    if (!workspace) { addOutput('Run: 请先打开一个文件夹。'); return; }
-    if (isRunning) { addOutput('Run: 已有运行任务在进行中。'); return; }
+    if (!f) { addOutput(t('app.runOpenFileFirst')); return; }
+    if (!workspace) { addOutput(t('app.runOpenFolderFirst')); return; }
+    if (isRunning) {
+      // 再次按下 = 停止当前运行（与 VS Code 的终止语义一致）
+      runAbortRef.current?.();
+      addOutput(t('app.runStopped'));
+      return;
+    }
+
+    const ext = f.path.split('.').pop()?.toLowerCase() || '';
+    let cmd = '';
+    if (ext === 'ts' || ext === 'tsx') cmd = `npx tsx "${f.path}"`;
+    else if (ext === 'js' || ext === 'mjs') cmd = `node "${f.path}"`;
+    else if (ext === 'py') cmd = `python "${f.path}"`;
+    else if (ext === 'go') cmd = `go run "${f.path}"`;
+    else if (ext === 'rs') cmd = `cargo run`;
+    else if (ext === 'sh') cmd = `bash "${f.path}"`;
+    else if (ext === 'ps1') cmd = `powershell -File "${f.path}"`;
+    else { addOutput(t('app.runUnsupportedType', { ext })); return; }
 
     setIsRunning(true);
-    addOutput(`Run: 启动 ${f.path.split(/[\\/]/).pop()}...`);
+    addOutput(t('app.runStarting', { file: f.path.split(/[\\/]/).pop() ?? '' }));
     try {
-      const ext = f.path.split('.').pop()?.toLowerCase() || '';
-      let cmd = '';
-      if (ext === 'ts' || ext === 'tsx') cmd = `npx tsx "${f.path}"`;
-      else if (ext === 'js' || ext === 'mjs') cmd = `node "${f.path}"`;
-      else if (ext === 'py') cmd = `python "${f.path}"`;
-      else if (ext === 'go') cmd = `go run "${f.path}"`;
-      else if (ext === 'rs') cmd = `cargo run`;
-      else if (ext === 'sh') cmd = `bash "${f.path}"`;
-      else if (ext === 'ps1') cmd = `powershell -File "${f.path}"`;
-      else { addOutput(`Run: 不支持的文件类型: .${ext}`); setIsRunning(false); return; }
-
-      const output = await window.loom.cliAgents?.run?.('run', cmd, workspace);
-      // Fallback: use shell execution
-      addOutput(output || `Run: 已启动 ${f.path.split(/[\\/]/).pop()}`);
+      const abort = window.loom?.verification?.runStream?.(
+        workspace,
+        cmd,
+        (stream, data) => { if (data) addOutput(data); },
+        (result) => {
+          const code = result.exitCode ?? -1;
+          if (code === 0) {
+            addOutput(t('app.runFinished', { code: String(code) }));
+          } else {
+            const tail = (result.stderr || result.error || '').trim().split('\n').slice(-5).join('\n');
+            addOutput(t('app.runFailed', { code: String(code), msg: tail ? `\n${tail}` : '' }));
+          }
+          setIsRunning(false);
+        },
+      );
+      runAbortRef.current = abort || null;
     } catch (e: any) {
-      addOutput(`Run 错误: ${e.message}`);
+      addOutput(t('app.runError', { msg: e.message }));
+      setIsRunning(false);
     }
-    setIsRunning(false);
   }, [workspace, isRunning, addOutput]);
 
   const stopDebug = useCallback(async () => {
-    if (!isDebugging) { addOutput('Debug: 没有正在进行的调试会话。'); return; }
-    addOutput('Debug: 停止中...');
+    if (!isDebugging) { addOutput(t('app.debugNoSession')); return; }
+    addOutput(t('app.debugStopping'));
     try {
       await window.loom.debug?.stop?.();
-      addOutput('Debug: 已停止');
+      addOutput(t('app.debugStopped'));
       setIsDebugging(false);
       if (debugCleanupRef.current) {
         debugCleanupRef.current();
         debugCleanupRef.current = null;
       }
     } catch (e: any) {
-      addOutput('Debug 停止错误: ' + e.message);
+      addOutput(t('app.debugStopError', { msg: e.message }));
     }
   }, [isDebugging]);
 
@@ -671,9 +712,9 @@ export default function App() {
     const target = openFiles[idx];
     if (target && isFileDirty(target.content, target.originalContent)) {
       const ok = await confirmDialog.ask({
-        title: '关闭标签页',
-        message: `"${target.name}" 有未保存的修改。是否关闭？`,
-        confirmText: '关闭',
+        title: t('app.closeTabTitle'),
+        message: t('app.closeTabConfirm', { name: target.name }),
+        confirmText: t('app.close'),
         danger: true,
       });
       if (!ok) return;
@@ -697,9 +738,9 @@ export default function App() {
     const dirty = openFiles.filter(f => isFileDirty(f.content, f.originalContent));
     if (dirty.length > 0) {
       const ok = await confirmDialog.ask({
-        title: '关闭所有标签页',
-        message: `${dirty.length} 个文件有未保存的修改。确定关闭所有标签页？`,
-        confirmText: '全部关闭',
+        title: t('app.closeAllTitle'),
+        message: t('app.closeAllConfirm', { count: dirty.length }),
+        confirmText: t('app.closeAll'),
         danger: true,
       });
       if (!ok) return;
@@ -716,9 +757,9 @@ export default function App() {
     const dirty = others.filter(f => isFileDirty(f.content, f.originalContent));
     if (dirty.length > 0) {
       const ok = await confirmDialog.ask({
-        title: '关闭其他标签页',
-        message: `${dirty.length} 个文件有未保存的修改。确定关闭其他标签页？`,
-        confirmText: '关闭其他',
+        title: t('app.closeOthersTitle'),
+        message: t('app.closeOthersConfirm', { count: dirty.length }),
+        confirmText: t('app.closeOthers'),
         danger: true,
       });
       if (!ok) return;
@@ -840,103 +881,103 @@ export default function App() {
   // ==== Menus ====
   const menuItems = React.useMemo(() => [
     {
-      label: locale === 'zh-CN' ? '文件' : 'File',
+      label: t('menu.file'),
       items: [
-        { label: locale === 'zh-CN' ? '新建文件' : 'New File', shortcut: 'Ctrl+N', action: createUntitledFile },
-        { label: locale === 'zh-CN' ? '打开文件...' : 'Open File...', shortcut: 'Ctrl+O', action: openFileFromDisk },
-        { label: locale === 'zh-CN' ? '打开文件夹...' : 'Open Folder...', shortcut: 'Ctrl+Shift+O', action: openFolder },
-        { label: locale === 'zh-CN' ? '关闭文件夹' : 'Close Folder', action: closeWorkspace, disabled: !workspace },
+        { label: t('menu.fileNewFile'), shortcut: 'Ctrl+N', action: createUntitledFile },
+        { label: t('menu.fileOpenFile'), shortcut: 'Ctrl+O', action: openFileFromDisk },
+        { label: t('menu.fileOpenFolder'), shortcut: 'Ctrl+Shift+O', action: openFolder },
+        { label: t('menu.fileCloseFolder'), action: closeWorkspace, disabled: !workspace },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '保存' : 'Save', shortcut: 'Ctrl+S', action: saveFile },
-        { label: locale === 'zh-CN' ? '保存全部' : 'Save All', shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
-        { label: locale === 'zh-CN' ? '重新载入文件' : 'Revert File', action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
-        { label: locale === 'zh-CN' ? '查看历史...' : 'Local History...', action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
+        { label: t('menu.fileSave'), shortcut: 'Ctrl+S', action: saveFile },
+        { label: t('menu.fileSaveAll'), shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
+        { label: t('menu.fileReloadFile'), action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
+        { label: t('menu.fileLocalHistory'), action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '关闭标签页' : 'Close Tab', shortcut: 'Ctrl+W', action: () => { if (openFiles.length) closeTab(activeIdx); } },
-        { label: locale === 'zh-CN' ? '关闭其他' : 'Close Others', action: () => closeOtherTabs(activeIdx) },
-        { label: locale === 'zh-CN' ? '关闭所有标签页' : 'Close All Tabs', action: closeAllTabs },
+        { label: t('menu.fileCloseTab'), shortcut: 'Ctrl+W', action: () => { if (openFiles.length) closeTab(activeIdx); } },
+        { label: t('menu.fileCloseOthers'), action: () => closeOtherTabs(activeIdx) },
+        { label: t('menu.fileCloseAll'), action: closeAllTabs },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '首选项' : 'Preferences', shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
+        { label: t('menu.filePreferences'), shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '退出' : 'Exit', action: () => window.loom?.window?.close?.() },
+        { label: t('menu.fileExit'), action: () => window.loom?.window?.close?.() },
       ],
     },
     {
-      label: locale === 'zh-CN' ? '编辑' : 'Edit',
+      label: t('menu.edit'),
       items: [
-        { label: locale === 'zh-CN' ? '撤销' : 'Undo', shortcut: 'Ctrl+Z', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'undo' } })); } },
-        { label: locale === 'zh-CN' ? '重做' : 'Redo', shortcut: 'Ctrl+Y', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'redo' } })); } },
+        { label: t('menu.editUndo'), shortcut: 'Ctrl+Z', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'undo' } })); } },
+        { label: t('menu.editRedo'), shortcut: 'Ctrl+Y', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'redo' } })); } },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '查找' : 'Find', shortcut: 'Ctrl+F', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'find' } })); } },
-        { label: locale === 'zh-CN' ? '替换' : 'Replace', shortcut: 'Ctrl+H', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'replace' } })); } },
+        { label: t('menu.editFind'), shortcut: 'Ctrl+F', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'find' } })); } },
+        { label: t('menu.editReplace'), shortcut: 'Ctrl+H', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'replace' } })); } },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '在文件中查找' : 'Find in Files', shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
+        { label: t('menu.editFindInFiles'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
       ],
     },
     {
-      label: locale === 'zh-CN' ? '视图' : 'View',
+      label: t('menu.view'),
       items: [
-        { label: locale === 'zh-CN' ? '命令面板' : 'Command Palette', shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
-        { label: locale === 'zh-CN' ? '快速打开文件' : 'Quick Open', shortcut: 'Ctrl+P', action: () => setCmdPalette(true) },
+        { label: t('menu.viewCommandPalette'), shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
+        { label: t('menu.viewQuickOpen'), shortcut: 'Ctrl+P', action: () => setCmdPalette(true) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '资源管理器' : 'Explorer', shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
-        { label: locale === 'zh-CN' ? '搜索' : 'Search', shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
-        { label: locale === 'zh-CN' ? '源码管理' : 'Source Control', shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
-        { label: locale === 'zh-CN' ? '扩展' : 'Extensions', shortcut: 'Ctrl+Shift+X', action: () => setSidebarView('extensions') },
-        { label: locale === 'zh-CN' ? '代码大纲' : 'Outline', action: () => setSidebarView('outline') },
+        { label: t('menu.viewExplorer'), shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
+        { label: t('menu.viewSearch'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
+        { label: t('menu.viewSourceControl'), shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
+        { label: t('menu.viewExtensions'), shortcut: 'Ctrl+Shift+X', action: () => setSidebarView('extensions') },
+        { label: t('menu.viewOutline'), action: () => setSidebarView('outline') },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '集成终端' : 'Terminal', shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
-        { label: locale === 'zh-CN' ? '切换侧边栏' : 'Toggle Sidebar', shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
-        { label: locale === 'zh-CN' ? '分屏编辑' : 'Split Editor', shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
+        { label: t('menu.viewTerminal'), shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
+        { label: t('menu.viewToggleSidebar'), shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
+        { label: t('menu.viewSplitEditor'), shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
         { separator: true, label: '' },
-        { label: locale === 'zh-CN' ? '切换主题' : 'Toggle Theme', action: () => { const next = theme === 'dark' ? 'light' : 'dark'; applyTheme(next); window.loom?.settings?.set?.('theme', next); } },
+        { label: t('menu.viewToggleTheme'), action: () => { const next = theme === 'dark' ? 'light' : 'dark'; applyTheme(next); window.loom?.settings?.set?.('theme', next); } },
       ],
     },
     {
-      label: locale === 'zh-CN' ? '运行' : 'Run',
+      label: t('menu.run'),
       items: [
-        { label: locale === 'zh-CN' ? '启动调试' : 'Start Debugging', shortcut: 'F5', action: startDebug },
-        { label: locale === 'zh-CN' ? '运行（不调试）' : 'Run Without Debugging', shortcut: 'Ctrl+F5', action: runCurrentFile },
-        { label: locale === 'zh-CN' ? '停止调试' : 'Stop Debugging', shortcut: 'Shift+F5', action: stopDebug },
+        { label: t('menu.runStartDebug'), shortcut: 'F5', action: startDebug },
+        { label: t('menu.runRunNoDebug'), shortcut: 'Ctrl+F5', action: runCurrentFile },
+        { label: t('menu.runStopDebug'), shortcut: 'Shift+F5', action: stopDebug },
       ],
     },
     {
-      label: locale === 'zh-CN' ? '帮助' : 'Help',
+      label: t('menu.help'),
       items: [
-        { label: locale === 'zh-CN' ? '关于 Loom IDE' : 'About Loom IDE', action: () => addNotification('Loom IDE v0.2.0 — AI 原生开发环境', 'info', 6000) },
-        { label: locale === 'zh-CN' ? '快捷键' : 'Keyboard Shortcuts', action: () => setSettingsOpen(true) },
+        { label: t('menu.helpAbout'), action: () => addNotification(t('app.aboutMessage'), 'info', 6000) },
+        { label: t('menu.helpKeymap'), action: () => setSettingsOpen(true) },
       ],
     },
   ], [locale, openFiles, activeIdx, theme, workspace, createUntitledFile, openFileFromDisk, openFolder, closeWorkspace, saveFile, saveAllFiles, closeTab, closeOtherTabs, closeAllTabs, startDebug, stopDebug, applyTheme, addNotification]);
 
   const commands = React.useMemo(() => [
-    { id: 'file.open', label: locale === 'zh-CN' ? '文件: 打开文件' : 'File: Open File', shortcut: 'Ctrl+O', action: openFileFromDisk },
-    { id: 'folder.open', label: locale === 'zh-CN' ? '文件: 打开文件夹' : 'File: Open Folder', shortcut: 'Ctrl+Shift+O', action: openFolder },
-    { id: 'folder.close', label: locale === 'zh-CN' ? '文件: 关闭文件夹' : 'File: Close Folder', action: closeWorkspace },
-    { id: 'file.new', label: locale === 'zh-CN' ? '文件: 新建' : 'File: New', shortcut: 'Ctrl+N', action: createUntitledFile },
-    { id: 'file.save', label: locale === 'zh-CN' ? '文件: 保存' : 'File: Save', shortcut: 'Ctrl+S', action: saveFile },
-    { id: 'file.saveAll', label: locale === 'zh-CN' ? '文件: 全部保存' : 'File: Save All', shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
-    { id: 'view.explorer', label: locale === 'zh-CN' ? '视图: 资源管理器' : 'View: Show Explorer', shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
-    { id: 'view.search', label: locale === 'zh-CN' ? '视图: 搜索' : 'View: Show Search', shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
-    { id: 'view.git', label: locale === 'zh-CN' ? '视图: 源码管理' : 'View: Show Source Control', shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
-    { id: 'view.extensions', label: locale === 'zh-CN' ? '视图: 扩展' : 'View: Show Extensions', action: () => setSidebarView('extensions') },
-    { id: 'view.outline', label: locale === 'zh-CN' ? '视图: 代码大纲' : 'View: Show Outline', action: () => setSidebarView('outline') },
-    { id: 'view.terminal', label: locale === 'zh-CN' ? '视图: 切换终端' : 'View: Toggle Terminal', shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
-    { id: 'view.sidebar', label: locale === 'zh-CN' ? '视图: 切换侧边栏' : 'View: Toggle Sidebar', shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
-    { id: 'view.commandPalette', label: locale === 'zh-CN' ? '视图: 命令面板' : 'View: Command Palette', shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
-    { id: 'view.splitEditor', label: locale === 'zh-CN' ? '视图: 分屏编辑' : 'View: Split Editor', shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
-    { id: 'ai.toggle', label: locale === 'zh-CN' ? 'AI: 切换面板' : 'AI: Toggle Panel', action: () => setAiOpen(p => !p) },
-    { id: 'settings.open', label: locale === 'zh-CN' ? '首选项: 打开设置' : 'Preferences: Open Settings', shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
-    { id: 'theme.dark', label: locale === 'zh-CN' ? '主题: 深色' : 'Color Theme: Dark', action: () => { applyTheme('dark'); window.loom?.settings?.set?.('theme', 'dark'); } },
-    { id: 'theme.light', label: locale === 'zh-CN' ? '主题: 浅色' : 'Color Theme: Light', action: () => { applyTheme('light'); window.loom?.settings?.set?.('theme', 'light'); } },
-    { id: 'theme.system', label: locale === 'zh-CN' ? '主题: 跟随系统' : 'Color Theme: System', action: () => { applyTheme('system'); window.loom?.settings?.set?.('theme', 'system'); } },
-    { id: 'file.revert', label: locale === 'zh-CN' ? '文件: 重新载入' : 'File: Revert File', action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
-    { id: 'file.history', label: locale === 'zh-CN' ? '文件: 查看本地历史' : 'File: Local History', action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
-    { id: 'editor.format', label: locale === 'zh-CN' ? '编辑器: 格式化文档' : 'Editor: Format Document', shortcut: 'Shift+Alt+F', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })) },
-    { id: 'editor.comment', label: locale === 'zh-CN' ? '编辑器: 切换行注释' : 'Editor: Toggle Line Comment', shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })) },
-    { id: 'debug.run', label: locale === 'zh-CN' ? '运行: 不调试运行' : 'Run: Run Without Debugging', shortcut: 'Ctrl+F5', action: runCurrentFile },
-    { id: 'workspace.rules', label: locale === 'zh-CN' ? '工作区: 编辑规则 (.loomrules)' : 'Workspace: Edit Rules (.loomrules)', action: () => {
-      if (!workspace) { addNotification(locale === 'zh-CN' ? '请先打开工作区' : 'Open a workspace first', 'warning'); return; }
+    { id: 'file.open', label: t('command.fileOpen'), shortcut: 'Ctrl+O', action: openFileFromDisk },
+    { id: 'folder.open', label: t('command.folderOpen'), shortcut: 'Ctrl+Shift+O', action: openFolder },
+    { id: 'folder.close', label: t('command.folderClose'), action: closeWorkspace },
+    { id: 'file.new', label: t('command.fileNew'), shortcut: 'Ctrl+N', action: createUntitledFile },
+    { id: 'file.save', label: t('command.fileSave'), shortcut: 'Ctrl+S', action: saveFile },
+    { id: 'file.saveAll', label: t('command.fileSaveAll'), shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
+    { id: 'view.explorer', label: t('command.viewExplorer'), shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
+    { id: 'view.search', label: t('command.viewSearch'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
+    { id: 'view.git', label: t('command.viewGit'), shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
+    { id: 'view.extensions', label: t('command.viewExtensions'), action: () => setSidebarView('extensions') },
+    { id: 'view.outline', label: t('command.viewOutline'), action: () => setSidebarView('outline') },
+    { id: 'view.terminal', label: t('command.viewTerminal'), shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
+    { id: 'view.sidebar', label: t('command.viewSidebar'), shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
+    { id: 'view.commandPalette', label: t('command.viewCommandPalette'), shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
+    { id: 'view.splitEditor', label: t('command.viewSplitEditor'), shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
+    { id: 'ai.toggle', label: t('command.aiToggle'), action: () => setAiOpen(p => !p) },
+    { id: 'settings.open', label: t('command.settingsOpen'), shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
+    { id: 'theme.dark', label: t('command.themeDark'), action: () => { applyTheme('dark'); window.loom?.settings?.set?.('theme', 'dark'); } },
+    { id: 'theme.light', label: t('command.themeLight'), action: () => { applyTheme('light'); window.loom?.settings?.set?.('theme', 'light'); } },
+    { id: 'theme.system', label: t('command.themeSystem'), action: () => { applyTheme('system'); window.loom?.settings?.set?.('theme', 'system'); } },
+    { id: 'file.revert', label: t('command.fileRevert'), action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
+    { id: 'file.history', label: t('command.fileHistory'), action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
+    { id: 'editor.format', label: t('command.editorFormat'), shortcut: 'Shift+Alt+F', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })) },
+    { id: 'editor.comment', label: t('command.editorComment'), shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })) },
+    { id: 'debug.run', label: t('command.debugRun'), shortcut: 'Ctrl+F5', action: runCurrentFile },
+    { id: 'workspace.rules', label: t('command.workspaceRules'), action: () => {
+      if (!workspace) { addNotification(t('app.editRulesOpenWorkspaceFirst'), 'warning'); return; }
       const rulesPath = workspace.replace(/[\\/]/g, '/').replace(/\/$/, '') + '/.loomrules';
       window.loom.fs.exists(rulesPath).then(async (exists: boolean) => {
         if (!exists) {
@@ -948,7 +989,7 @@ export default function App() {
         }
         const content = await window.loom.fs.readFile(rulesPath);
         addOrFocusFile(rulesPath, content);
-      }).catch(() => addNotification(locale === 'zh-CN' ? '无法创建/打开规则文件' : 'Failed to create/open rules file', 'error'));
+      }).catch(() => addNotification(t('app.editRulesCreateFailed'), 'error'));
     }},
   ], [locale, workspace, openFiles, activeIdx, openFileFromDisk, openFolder, closeWorkspace, createUntitledFile, saveFile, saveAllFiles, applyTheme, runCurrentFile, addOrFocusFile, addNotification]);
 
@@ -1023,7 +1064,7 @@ export default function App() {
         />
         {sidebarView && (
           <div style={{ position: 'relative' }}>
-            <ErrorBoundary name={locale === 'zh-CN' ? '侧边栏' : 'Sidebar'}>
+            <ErrorBoundary name={t('app.sidebar')}>
               <Sidebar
                 view={sidebarView}
                 workspacePath={workspace}
@@ -1083,7 +1124,7 @@ export default function App() {
               <Breadcrumb filePath={activeFile.path} onOpenFile={addOrFocusFile} />
             )}
             <div className={`editor-wrapper editor-container ${isDraggingFile ? 'drag-active' : ''}`}>
-              <ErrorBoundary name={locale === 'zh-CN' ? '编辑器' : 'Editor'}>
+              <ErrorBoundary name={t('app.editor')}>
                 {splitMode ? (
                   <EditorGroup
                     openFiles={openFiles}
@@ -1106,12 +1147,12 @@ export default function App() {
               </ErrorBoundary>
               {isDraggingFile && (
                 <div className="drop-zone">
-                  <div className="drop-zone-text">松开鼠标以打开文件</div>
+                  <div className="drop-zone-text">{t('app.dropToOpenFile')}</div>
                 </div>
               )}
             </div>
           </div>
-          <ErrorBoundary name={locale === 'zh-CN' ? '底部面板' : 'Bottom Panel'}>
+          <ErrorBoundary name={t('app.bottomPanel')}>
             <Panel
               visible={panelVisible}
               height={panelHeight}
@@ -1120,6 +1161,7 @@ export default function App() {
               problems={problems}
               outputLines={outputLines}
               workspacePath={workspace}
+              onOpenFile={openFileAndJump}
             />
           </ErrorBoundary>
         </div>
@@ -1143,7 +1185,7 @@ export default function App() {
                 window.addEventListener('mouseup', onUp);
               }}
             />
-            <ErrorBoundary name={locale === 'zh-CN' ? 'AI 面板' : 'AI Panel'}>
+            <ErrorBoundary name={t('app.aiPanel')}>
               <AIAgent
                 workspacePath={workspace}
                 onClose={() => setAiOpen(false)}

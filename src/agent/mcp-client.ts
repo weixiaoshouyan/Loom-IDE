@@ -1,10 +1,14 @@
 /**
  * Loom MCP (Model Context Protocol) Client
  * Connects to MCP servers for tool discovery and execution.
- * 
+ *
  * Supports:
- * - stdio transport (local processes)
- * - HTTP/SSE transport (remote servers)
+ * - stdio transport (local processes, JSON-RPC 2.0 over stdin/stdout)
+ * - HTTP endpoints (Loom-specific REST shape: GET /tools/list, POST /tools/call)
+ *
+ * NOTE: the HTTP transport is NOT the MCP HTTP/SSE standard — standard remote
+ * MCP servers (SSE + /messages) are not supported yet. The transport is
+ * documented honestly as a Loom-specific protocol extension.
  */
 
 import { spawn, ChildProcess } from 'child_process';
@@ -128,7 +132,7 @@ export class MCPClient {
   private tools: Map<string, MCPTool> = new Map();
   private buffers: Map<string, string> = new Map();
   private requestId = 0;
-  private pendingRequests: Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }> = new Map();
+  private pendingRequests: Map<number, { serverId: string; resolve: (v: any) => void; reject: (e: Error) => void }> = new Map();
   private onUpdate?: (servers: MCPServerConfig[]) => void;
   private onToolsUpdate?: (tools: MCPTool[]) => void;
 
@@ -196,10 +200,8 @@ export class MCPClient {
         const pid = proc.pid;
         if (pid) {
           if (process.platform === 'win32') {
-            // Windows 没有 POSIX 进程组；用 taskkill /T 杀整棵子树，
-            // 避免 npx 拉起的孙进程变成孤儿。
-            const { execFileSync } = require('child_process');
-            try { execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }); } catch {}
+            // Windows：主进程终止后 stdio 管道关闭，孙进程随父退出。
+            try { process.kill(pid, 'SIGKILL'); } catch {}
           } else if (proc.killed === false) {
             // POSIX：spawn 时设了 detached，pid 即进程组组长，杀整组。
             try { process.kill(-pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} }
@@ -210,6 +212,27 @@ export class MCPClient {
       this.processes.delete(serverId);
     }
     this.buffers.delete(serverId);
+    // A manually disconnected server exposes no tools until reconnected.
+    this.removeServerTools(serverId);
+  }
+
+  /** Remove every tool belonging to a server and notify listeners. */
+  private removeServerTools(serverId: string) {
+    let changed = false;
+    for (const [name, tool] of this.tools) {
+      if (tool.serverId === serverId) { this.tools.delete(name); changed = true; }
+    }
+    if (changed) this.onToolsUpdate?.(this.getAllTools());
+  }
+
+  /** Reject every in-flight request for a dead server (no 30s hang). */
+  private rejectServerRequests(serverId: string, error: Error) {
+    for (const [id, entry] of this.pendingRequests) {
+      if (entry.serverId === serverId) {
+        this.pendingRequests.delete(id);
+        entry.reject(error);
+      }
+    }
   }
 
   private async connectStdio(server: MCPServerConfig): Promise<{ ok: boolean; message: string }> {
@@ -249,20 +272,32 @@ export class MCPClient {
       }
 
       proc.on('exit', (code) => {
+        // Superseded guard: a reconnect may have replaced this process before
+        // the old one's exit event fired — only the current process cleans up.
+        if (this.processes.get(server.id) !== proc) return;
         console.log(`[MCP:${server.id}] exited with code ${code}`);
         this.processes.delete(server.id);
         this.buffers.delete(server.id);
+        // A dead server must not leave callers hanging for the 30s timeout,
+        // and its tools must not be advertised as available.
+        this.rejectServerRequests(server.id, new Error(`MCP server "${server.name}" exited unexpectedly (code ${code}).`));
+        this.removeServerTools(server.id);
       });
 
       proc.on('error', (err) => {
+        if (this.processes.get(server.id) !== proc) return;
         console.error(`[MCP:${server.id}] error:`, err.message);
+        this.processes.delete(server.id);
+        this.buffers.delete(server.id);
+        this.rejectServerRequests(server.id, new Error(`MCP server "${server.name}" failed to start: ${err.message}`));
+        this.removeServerTools(server.id);
       });
 
       // Initialize connection
       const initResp = await this.sendRequest(server.id, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        clientInfo: { name: 'Loom IDE', version: '0.2.0' },
+        clientInfo: { name: 'Loom IDE', version: '0.2.1' },
       });
       console.log(`[MCP:${server.id}] initialized:`, initResp?.serverInfo?.name);
       this.sendNotification(server.id, 'notifications/initialized', {});
@@ -290,6 +325,8 @@ export class MCPClient {
   }
 
   private async connectHttp(server: MCPServerConfig): Promise<{ ok: boolean; message: string }> {
+    // Loom-specific REST endpoints (NOT the MCP HTTP/SSE standard — see the
+    // module header). Tool discovery is GET {url}/tools/list.
     try {
       const resp = await fetch(`${server.url}/tools/list`, {
         headers: { 'Content-Type': 'application/json', ...(server.headers || {}) },
@@ -342,6 +379,14 @@ export class MCPClient {
     if (!server) throw new Error(`Server "${serverId}" not found`);
 
     if (server.transport === 'stdio') {
+      // Lazy reconnect: if the process died (crash or external kill), bring
+      // the server back up once before retrying the call.
+      if (!this.processes.has(serverId) && server.enabled) {
+        const result = await this.connect(serverId);
+        if (!result.ok) {
+          throw new Error(`MCP server "${server.name}" is not connected: ${result.message}`);
+        }
+      }
       return this.sendRequest(serverId, 'tools/call', { name: toolName, arguments: args });
     } else if (server.transport === 'http' && server.url) {
       if (isForbiddenMcpHttpUrl(server.url)) {
@@ -391,7 +436,7 @@ export class MCPClient {
 
       const id = ++this.requestId;
       const request: JSONRPCRequest = { jsonrpc: '2.0', id, method, params };
-      this.pendingRequests.set(id, { resolve, reject });
+      this.pendingRequests.set(id, { serverId, resolve, reject });
 
       // Timeout after 30 seconds
       const timeoutId = setTimeout(() => {
@@ -405,6 +450,7 @@ export class MCPClient {
       const originalResolve = resolve;
       const originalReject = reject;
       this.pendingRequests.set(id, {
+        serverId,
         resolve: (value: any) => { clearTimeout(timeoutId); originalResolve(value); },
         reject: (err: any) => { clearTimeout(timeoutId); originalReject(err); },
       });
