@@ -50,29 +50,8 @@ export interface AIConfig {
   orcaBaseUrl: string;
 }
 
-const DEFAULT_PROVIDERS: AIProvider[] = [
-  { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiKey: '', models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o'], enabledModels: [], activeModel: 'gpt-4.1-mini', isCustom: false },
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', apiKey: '', models: ['deepseek-chat', 'deepseek-reasoner'], enabledModels: [], activeModel: 'deepseek-chat', isCustom: false },
-  { id: 'xiaomi', name: '\u5c0f\u7c73 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', apiKey: '', models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-flash', 'mimo-v2-omni'], enabledModels: [], activeModel: 'mimo-v2.5-pro', isCustom: false },
-  { id: 'xiaomi-tokenplan', name: '\u5c0f\u7c73 MiMo Token Plan', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', apiKey: '', models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-flash', 'mimo-v2-omni'], enabledModels: [], activeModel: 'mimo-v2.5-pro', isCustom: false },
-  { id: 'dashscope', name: '\u901a\u4e49\u5343\u95ee', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', models: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-long'], enabledModels: [], activeModel: 'qwen-plus', isCustom: false },
-  { id: 'doubao', name: '\u8c46\u5305', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiKey: '', models: ['doubao-pro-256k', 'doubao-pro-128k', 'doubao-lite-128k'], enabledModels: [], activeModel: 'doubao-pro-128k', isCustom: false },
-  { id: 'zhipu', name: '\u667a\u8c31 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: '', models: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'], enabledModels: [], activeModel: 'glm-4-plus', isCustom: false },
-  { id: 'moonshot', name: 'Moonshot Kimi', baseUrl: 'https://api.moonshot.cn/v1', apiKey: '', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'], enabledModels: [], activeModel: 'moonshot-v1-32k', isCustom: false },
-  { id: 'siliconflow', name: '\u7845\u57fa\u6d41\u52a8', baseUrl: 'https://api.siliconflow.cn/v1', apiKey: '', models: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'meta-llama/Meta-Llama-3.1-70B-Instruct'], enabledModels: [], activeModel: 'deepseek-ai/DeepSeek-V3', isCustom: false },
-  { id: 'yi', name: '\u96f6\u4e00\u4e07\u7269 Yi', baseUrl: 'https://api.lingyiwanwu.com/v1', apiKey: '', models: ['yi-large', 'yi-medium', 'yi-spark'], enabledModels: [], activeModel: 'yi-large', isCustom: false },
-  { id: 'baichuan', name: '\u767e\u5ddd\u667a\u80fd', baseUrl: 'https://api.baichuan-ai.com/v1', apiKey: '', models: ['Baichuan4', 'Baichuan3-Turbo'], enabledModels: [], activeModel: 'Baichuan4', isCustom: false },
-  { id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimax.chat/v1', apiKey: '', models: ['abab6.5s-chat', 'abab6.5g-chat'], enabledModels: [], activeModel: 'abab6.5s-chat', isCustom: false },
-  { id: 'custom', name: 'Custom Provider', baseUrl: '', apiKey: '', models: ['default'], enabledModels: [], activeModel: 'default', isCustom: true },
-];
-
-const DEFAULT_PROFILES: AgentProfile[] = [
-  { id: 'coder', name: 'Code Assistant', systemPrompt: 'You are an expert programming assistant. Help users write, debug, review, and optimize code. Provide clear explanations with code examples. Always respond in the same language as the user.', providerId: '', model: '', temperature: 0.3, maxTokens: 4096, icon: '💻' },
-  { id: 'reviewer', name: 'Code Reviewer', systemPrompt: 'You are a senior code reviewer. Analyze code for bugs, security issues, performance problems, and style violations. Provide actionable suggestions with improved code examples.', providerId: '', model: '', temperature: 0.2, maxTokens: 4096, icon: '🔍' },
-  { id: 'architect', name: 'Architect', systemPrompt: 'You are a software architect. Help with system design, architecture decisions, design patterns, and technical trade-offs. Think broadly about scalability, maintainability, and team workflow.', providerId: '', model: '', temperature: 0.4, maxTokens: 4096, icon: '🏗️' },
-  { id: 'teacher', name: 'Teacher', systemPrompt: 'You are a patient programming teacher. Explain concepts clearly with analogies and examples. Break down complex topics into digestible steps. Encourage learning by doing.', providerId: '', model: '', temperature: 0.5, maxTokens: 4096, icon: '📚' },
-  { id: 'general', name: 'General Assistant', systemPrompt: 'You are a helpful AI assistant. Answer questions accurately and concisely. When working with code, follow best practices and explain your reasoning.', providerId: '', model: '', temperature: 0.7, maxTokens: 4096, icon: '🤖' },
-];
+import { DEFAULT_PROVIDERS, DEFAULT_PROFILES } from './ai-engine-defaults';
+export { getDefaultProviders, getDefaultProfiles } from './ai-engine-defaults';
 
 import { getToolSystemPrompt, executeToolCall, parseToolCalls, stripToolCalls, ToolExecutionContext, AGENT_TOOLS } from './agent-tools';
 import { SkillManager } from './skills';
@@ -83,77 +62,13 @@ import { Scratchpad } from './scratchpad';
 import { TokenBudgetManager, DEFAULT_TOKEN_BUDGET_CONFIG, type TokenBudgetEvent } from './token-budget';
 import { CheckpointManager } from './checkpoint';
 
-/**
- * 带指数退避的 fetch 封装。处理 429 / 5xx / 网络错误。
- * 尊重外部 AbortSignal（用户取消时立即停止重试）。
- */
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit & { maxRetries?: number; baseDelayMs?: number } = {},
-  externalSignal?: AbortSignal
-): Promise<Response> {
-  const maxRetries = options.maxRetries ?? 3;
-  const baseDelayMs = options.baseDelayMs ?? 800;
-  let lastError: any = null;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (externalSignal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
-    try {
-      const resp = await fetch(url, { ...options, signal: externalSignal });
-      // 不可重试：4xx（除 408/425/429）或 2xx/3xx
-      if (resp.ok) return resp;
-      const status = resp.status;
-      const retryable = status === 408 || status === 425 || status === 429 || (status >= 500 && status < 600);
-      if (!retryable || attempt === maxRetries) return resp;
-      const retryAfter = Number(resp.headers.get('retry-after')) || 0;
-      const delay = retryAfter > 0
-        ? retryAfter * 1000
-        : baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
-      await new Promise(r => setTimeout(r, delay));
-    } catch (e: any) {
-      lastError = e;
-      // 用户主动中止：不重试
-      if (e?.name === 'AbortError' || externalSignal?.aborted) throw e;
-      if (attempt === maxRetries) throw e;
-      const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
-      await new Promise(r => setTimeout(r, delay));
-    }
-  }
-  throw lastError || new Error('fetchWithRetry: exhausted retries');
-}
+import { fetchWithRetry, readSSEStream } from './ai-engine-http';
+export { fetchWithRetry } from './ai-engine-http';
 
 // Convert tools to OpenAI function format
 
-/**
- * 轻量级 token 估算器。
- * 启发式：1 个中文字符 ≈ 1.5 token，1 个英文 token ≈ 4 字符
- * 实际 LLM 精确计数需要专用分词器（gpt-tokenizer / tiktoken），这里仅作 UI 显示用
- */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  let chinese = 0;
-  let other = 0;
-  for (const ch of text) {
-    if (/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch)) chinese++;
-    else other++;
-  }
-  // 工具调用 / JSON 序列化损耗 ~15%
-  return Math.ceil(chinese * 1.5 + other / 4 * 1.15);
-}
-
-export function estimateMessagesTokens(messages: Array<{ role: string; content?: string; toolCalls?: any[] }>): number {
-  // 每条消息加 4 token 的 role / 框架开销
-  let total = 0;
-  for (const m of messages) {
-    total += 4;
-    total += estimateTokens(m.content || '');
-    if (Array.isArray(m.toolCalls)) {
-      total += estimateTokens(JSON.stringify(m.toolCalls));
-    }
-  }
-  return total;
-}
+import { estimateTokens, estimateMessagesTokens } from './ai-engine-tokens';
+export { estimateTokens, estimateMessagesTokens } from './ai-engine-tokens';
 
 const AGENT_TOOLS_OPENAI = AGENT_TOOLS.map(t => ({
   type: 'function' as const,
@@ -331,58 +246,10 @@ export class AIEngine {
         return;
       }
       reader = (resp.body as any).getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      // Read-stall guard: AbortSignal.timeout above only covers the response
-      // HEADERS. A server that trickles one byte every few minutes would hang
-      // the while-loop forever (the agent round never finishes). If no chunk
-      // arrives for 60s, cancel the reader and treat the stream as ended.
-      const READ_STALL_TIMEOUT_MS = 60000;
-      while (true) {
-        let readTimer: ReturnType<typeof setTimeout> | null = null;
-        const readPromise = reader.read();
-        const stallPromise = new Promise<{ done: boolean; timedOut?: boolean }>((resolve) => {
-          readTimer = setTimeout(() => resolve({ done: true, timedOut: true }), READ_STALL_TIMEOUT_MS);
-        });
-        const chunk = await Promise.race([readPromise, stallPromise]);
-        if (chunk.timedOut) {
-          try { await reader.cancel(); } catch {}
-          break;
-        }
-        if (readTimer) clearTimeout(readTimer);
-        const { done, value } = chunk as { done: boolean; value?: Uint8Array };
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const dataStr = trimmed.slice(6);
-          if (dataStr === '[DONE]') return;
-          try {
-            const parsed = JSON.parse(dataStr);
-            if (isAnthropic) {
-              if (parsed.type === 'content_block_delta') {
-                const text = parsed.delta?.text;
-                if (text) yield text;
-              }
-            } else {
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) yield delta;
-            }
-            const usage = parsed.usage || parsed.message?.usage;
-            if (usage) {
-              const input = usage.prompt_tokens || usage.input_tokens || 0;
-              const output = usage.completion_tokens || usage.output_tokens || 0;
-              if (input || output) {
-                if (streamId) this.recordTokenUsage(streamId, input, output);
-                this.lastUsage = { input, output };
-              }
-            }
-          } catch {}
-        }
-      }
+      yield* readSSEStream(reader, isAnthropic, (input, output) => {
+        if (streamId) this.recordTokenUsage(streamId, input, output);
+        this.lastUsage = { input, output };
+      });
     } catch (e: any) {
       try { await (reader as any)?.cancel?.(); } catch {}
       yield `Error: ${e.message}`;
@@ -1630,60 +1497,10 @@ After this reflection, continue with tool calls if needed.`;
       }
 
       reader = (resp.body as any).getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      // Read-stall guard (same as streamChatWithProvider): a server that stops
-      // sending chunks would otherwise hang this loop forever.
-      const READ_STALL_TIMEOUT_MS = 60000;
-      while (true) {
-        let readTimer: ReturnType<typeof setTimeout> | null = null;
-        const readPromise = reader.read();
-        const stallPromise = new Promise<{ done: boolean; timedOut?: boolean }>((resolve) => {
-          readTimer = setTimeout(() => resolve({ done: true, timedOut: true }), READ_STALL_TIMEOUT_MS);
-        });
-        const chunk = await Promise.race([readPromise, stallPromise]);
-        if (chunk.timedOut) {
-          try { await reader.cancel(); } catch {}
-          break;
-        }
-        if (readTimer) clearTimeout(readTimer);
-        const { done, value } = chunk as { done: boolean; value?: Uint8Array };
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const dataStr = trimmed.slice(6);
-          if (dataStr === '[DONE]') return;
-
-          try {
-            const parsed = JSON.parse(dataStr);
-            if (isAnthropic) {
-              if (parsed.type === 'content_block_delta') {
-                const text = parsed.delta?.text;
-                if (text) yield text;
-              }
-            } else {
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) yield delta;
-            }
-            // 提取 usage 字段（OpenAI 在最后一个 chunk 返回 usage；Anthropic 在 message_delta 阶段）
-            const usage = parsed.usage || parsed.message?.usage;
-            if (usage) {
-              const input = usage.prompt_tokens || usage.input_tokens || 0;
-              const output = usage.completion_tokens || usage.output_tokens || 0;
-              if (input || output) {
-                if (streamId) this.recordTokenUsage(streamId, input, output);
-                this.lastUsage = { input, output };
-              }
-            }
-          } catch {}
-        }
-      }
+      yield* readSSEStream(reader, isAnthropic, (input, output) => {
+        if (streamId) this.recordTokenUsage(streamId, input, output);
+        this.lastUsage = { input, output };
+      });
     } catch (e: any) {
       try { await (reader as any)?.cancel?.(); } catch {}
       yield `Error: ${e.message}`;
@@ -1737,5 +1554,3 @@ After this reflection, continue with tool calls if needed.`;
   }
 }
 
-export function getDefaultProviders(): AIProvider[] { return DEFAULT_PROVIDERS; }
-export function getDefaultProfiles(): AgentProfile[] { return DEFAULT_PROFILES; }

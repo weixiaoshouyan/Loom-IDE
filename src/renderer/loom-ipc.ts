@@ -20,9 +20,8 @@
 // mirrored locally to avoid dragging `src/main/*` into the renderer compile.
 
 import type { AIConfig, AIProvider } from '../agent/ai-engine';
-import type { CodeIndex, CodeSymbol } from '../agent/code-index';
+import type { CodeSymbol } from '../agent/code-index';
 import type { Skill } from '../agent/skills';
-import type { MCPServerConfig, MCPTool } from '../agent/mcp-client';
 import type {
   DevelopmentCommandEvent,
   DevelopmentCommandResult,
@@ -76,7 +75,6 @@ export interface LoomSubAgentChunk {
 }
 
 export interface LoomCodeIndex {
-  build: (workspacePath: string) => Promise<CodeIndex>;
   search: (workspacePath: string, query: string, topK?: number) => Promise<CodeSymbol[]>;
   prebuild: (workspacePath: string) => Promise<{
     ok: boolean;
@@ -124,7 +122,6 @@ export interface LoomAgentChatOptions {
 }
 
 export interface LoomAI {
-  chat: (messages: unknown[], context?: string) => Promise<string>;
   chatStream: (
     messages: unknown[],
     context: string | undefined,
@@ -133,7 +130,6 @@ export interface LoomAI {
     onError: (err: Error) => void,
     onUsage?: (usage: { input: number; output: number }) => void,
   ) => () => void;
-  getUsage: () => Promise<LoomUsage>;
   getConfig: () => Promise<LoomMaskedAIConfig>;
   updateConfig: (patch: unknown) => Promise<LoomMaskedAIConfig>;
   updateProvider: (id: string, patch: unknown) => Promise<LoomMaskedAIConfig>;
@@ -144,12 +140,6 @@ export interface LoomAI {
   removeProfile: (id: string) => Promise<LoomMaskedAIConfig>;
   testConnection: (providerId: string) => Promise<{ ok: boolean; msg: string }>;
   listModels: (providerId: string) => Promise<{ ok: boolean; models: string[]; msg: string }>;
-  askWith: (
-    providerId: string,
-    model: string,
-    messages: unknown[],
-    context?: string,
-  ) => Promise<{ text: string; usage: { input: number; output: number } }>;
   /** 指定 provider/model 的流式问答，用于「双模型对比」实时显示回复过程。返回取消函数。 */
   askWithStream: (
     providerId: string,
@@ -166,7 +156,6 @@ export interface LoomAI {
     providerId: string,
   ) => Promise<{ ok: false; msg: string } | { ok: true; config: LoomMaskedAIConfig }>;
   checkOrcaStatus: () => Promise<{ ok: boolean; version?: string; error?: string }>;
-  getOrcaProviders: () => Promise<unknown[]>;
   approvePlan: (sid: string) => Promise<boolean>;
   rejectPlan: (sid: string) => Promise<boolean>;
   approveDestructive: (sid: string) => Promise<boolean>;
@@ -204,14 +193,6 @@ export interface LoomAI {
     ) => void,
     options?: LoomAgentChatOptions,
   ) => () => void;
-  subAgentStream: (
-    request: string,
-    workspacePath: string,
-    openFiles: unknown[] | undefined,
-    onChunk: (chunk: LoomSubAgentChunk) => void,
-    onEnd: () => void,
-    onError: (err: Error) => void,
-  ) => () => void;
 }
 
 export interface LoomCliAgentInfo {
@@ -233,7 +214,6 @@ export type LoomAgentTask = Omit<QueuedDevelopmentCommand, 'controller'>;
 
 export interface LoomAgentTasks {
   list: () => Promise<LoomAgentTask[]>;
-  get: (taskId: string) => Promise<LoomAgentTask | null | undefined>;
   cancel: (taskId: string) => Promise<boolean>;
   retry: (taskId: string) => Promise<boolean>;
 }
@@ -291,17 +271,9 @@ export interface LoomWebviewEvent {
 export interface LoomPlugins {
   getAll: () => Promise<LoomPluginInfo[]>;
   setEnabled: (id: string, enabled: boolean) => Promise<boolean>;
-  install: (pluginPath: string) => Promise<{ ok: boolean; msg: string }>;
   uninstall: (id: string) => Promise<boolean>;
   getCommands: () => Promise<LoomPluginCommand[]>;
   executeCommand: (id: string, ...args: unknown[]) => Promise<unknown>;
-  getConfigurations: () => Promise<
-    Record<string, { type: string; default: unknown; description?: string; plugin: string }>
-  >;
-  getUserConfig: () => Promise<Record<string, unknown>>;
-  setUserConfig: (key: string, value: unknown) => Promise<boolean>;
-  getNotifications: () => Promise<LoomPluginNotification[]>;
-  clearNotifications: () => Promise<boolean>;
   installFromFile: () => Promise<{ ok: boolean; msg: string }>;
   getWebviewPanels: () => Promise<LoomWebviewPanelInfo[]>;
   postMessageToWebview: (panelId: string, message: unknown) => Promise<boolean>;
@@ -310,8 +282,6 @@ export interface LoomPlugins {
 
 export interface LoomSkills {
   getAll: () => Promise<Skill[]>;
-  getByCategory: (category: string) => Promise<Skill[]>;
-  resolvePrompt: (skillId: string, variables: Record<string, string>) => Promise<string | null>;
 }
 
 export interface LoomMarketplaceExtension {
@@ -344,23 +314,9 @@ export interface LoomMarketplace {
   list: (query?: string) => Promise<(LoomMarketplaceExtension & { installed: boolean })[]>;
   install: (id: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
   uninstall: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  listInstalled: () => Promise<LoomInstalledExtension[]>;
 }
 
-export interface LoomMcp {
-  getServers: () => Promise<MCPServerConfig[]>;
-  addServer: (config: unknown) => Promise<{ ok: boolean; message?: string }>;
-  updateServer: (id: string, patch: unknown) => Promise<{ ok: boolean; message?: string }>;
-  removeServer: (id: string) => Promise<boolean>;
-  connect: (serverId: string) => Promise<{ ok: boolean; message: string }>;
-  disconnect: (serverId: string) => Promise<boolean>;
-  getTools: () => Promise<MCPTool[]>;
-  callTool: (
-    serverId: string,
-    toolName: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ ok: true; result: unknown } | { ok: false; message: string }>;
-}
+export interface LoomMcp {}
 
 export interface LoomSettings {
   // The persisted app config is a main-layer shape (includes decrypted keys);
@@ -372,7 +328,6 @@ export interface LoomSettings {
 
 export interface LoomRecent {
   getFolders: () => Promise<string[]>;
-  clearFolders: () => Promise<void>;
 }
 
 export interface LoomConversationSummary {
@@ -393,18 +348,7 @@ export interface LoomConversationSearchHit {
   matchScore: number;
 }
 
-export interface LoomConversations {
-  save: (projectPath: string, messages: unknown[]) => Promise<boolean>;
-  load: (projectPath: string) => Promise<unknown[]>;
-  list: () => Promise<LoomConversationSummary[]>;
-  delete: (projectPath: string) => Promise<boolean>;
-  clear: () => Promise<boolean>;
-  search: (query: string, limit?: number) => Promise<LoomConversationSearchHit[]>;
-  export: (
-    projectPath: string,
-    format: 'markdown' | 'json',
-  ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
-}
+export interface LoomConversations {}
 
 export interface LoomTeamUser {
   id: string;
@@ -419,15 +363,9 @@ export interface LoomTeam {
     content: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   getUser: () => Promise<LoomTeamUser | null>;
-  signIn: (credentials?: Record<string, string>) => Promise<{ ok: boolean; error?: string }>;
-  signOut: () => Promise<void>;
 }
 
-export interface LoomTelemetry {
-  setConfig: (config: unknown) => Promise<{ ok: true }>;
-  getAuditLog: () => Promise<unknown[]>;
-  clearAuditLog: () => Promise<{ ok: true }>;
-}
+export interface LoomTelemetry {}
 
 export interface LoomDialog {
   openFile: () => Promise<{ path: string; content: string }[] | null>;
@@ -442,7 +380,6 @@ export interface LoomFs {
   readFile: (p: string) => Promise<string>;
   writeFile: (p: string, c: string) => Promise<boolean>;
   readDir: (p: string) => Promise<{ name: string; isDirectory: boolean; path: string }[]>;
-  stat: (p: string) => Promise<{ isDirectory: boolean; size: number; mtime: number }>;
   exists: (p: string) => Promise<boolean>;
   mkdir: (p: string) => Promise<boolean>;
   deletePath: (p: string) => Promise<boolean>;
@@ -468,7 +405,6 @@ export interface LoomGit {
   push: (cwd: string) => Promise<string>;
   checkout: (cwd: string, branch: string) => Promise<boolean>;
   log: (cwd: string, count?: number) => Promise<string[]>;
-  diff: (cwd: string, file?: string) => Promise<string>;
   /** Original (HEAD or index) content of a file for the diff view; '' for untracked. */
   show: (cwd: string, file: string) => Promise<string>;
 }
@@ -486,7 +422,6 @@ export interface LoomWindow {
   minimize: () => void;
   maximize: () => void;
   close: () => void;
-  onMaximized: (cb: (maximized: boolean) => void) => () => void;
 }
 
 export interface LoomShell {
@@ -559,9 +494,6 @@ export interface LoomDebugRuntime {
 
 export interface LoomUpdate {
   check: () => Promise<{ ok: boolean; reason?: string; current?: string; hasUpdate?: boolean; message?: string }>;
-  onAvailable: (cb: (info: { version: string; releaseDate?: string }) => void) => () => void;
-  onNotAvailable: (cb: () => void) => () => void;
-  onError: (cb: (message: string) => void) => () => void;
 }
 
 /** 主进程应用级事件（CLI / loom:// 协议 / 单实例二次启动）。 */

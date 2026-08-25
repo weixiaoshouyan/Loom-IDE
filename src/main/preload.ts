@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   Loom,
   LoomAgentStreamChunk,
-  LoomSubAgentChunk,
   LoomUsage,
   LoomWebviewEvent,
 } from '../renderer/loom-ipc';
@@ -20,13 +19,11 @@ const loom: Loom = {
     try { console.warn(`[renderer:${payload.type}] ${payload.ts} ${payload.msg}`); } catch {}
   },
   codeIndex: {
-    build: (workspacePath) => ipcRenderer.invoke('code-index:build', workspacePath),
     search: (workspacePath, query, topK) => ipcRenderer.invoke('code-index:search', workspacePath, query, topK),
     prebuild: (workspacePath) => ipcRenderer.invoke('codeindex:prebuild', workspacePath),
     fileSymbols: (workspacePath, filePath) => ipcRenderer.invoke('code-index:file-symbols', workspacePath, filePath),
   },
   ai: {
-    chat: (messages, context) => ipcRenderer.invoke('ai:chat', messages, context),
     chatStream: (messages, context, onChunk, onEnd, onError, onUsage) => {
       const id = crypto.randomUUID();
       // 先移除同名旧监听器，避免多次注册累积
@@ -53,7 +50,6 @@ const loom: Loom = {
       ipcRenderer.send('ai:chat-stream', id, messages, context);
       return () => { ipcRenderer.send('ai:chat-stream-abort', id); cleanup(); };
     },
-    getUsage: () => ipcRenderer.invoke('ai:get-usage'),
     getConfig: () => ipcRenderer.invoke('ai:getConfig'),
     updateConfig: (patch) => ipcRenderer.invoke('ai:updateConfig', patch),
     updateProvider: (id, patch) => ipcRenderer.invoke('ai:updateProvider', id, patch),
@@ -64,8 +60,6 @@ const loom: Loom = {
     removeProfile: (id) => ipcRenderer.invoke('ai:removeProfile', id),
     testConnection: (providerId) => ipcRenderer.invoke('ai:testConnection', providerId),
     listModels: (providerId) => ipcRenderer.invoke('ai:listModels', providerId),
-    askWith: (providerId, model, messages, context) =>
-      ipcRenderer.invoke('ai:ask-with', providerId, model, messages, context),
     askWithStream: (providerId, model, messages, context, onChunk, onEnd, onError, onUsage) => {
       const id = crypto.randomUUID();
       const chunkEvent = 'ai:ask-with-stream-chunk';
@@ -94,7 +88,6 @@ const loom: Loom = {
     detectEnvProviders: () => ipcRenderer.invoke('ai:detectEnvProviders'),
     applyEnvProvider: (providerId) => ipcRenderer.invoke('ai:applyEnvProvider', providerId),
     checkOrcaStatus: () => ipcRenderer.invoke('ai:checkOrcaStatus'),
-    getOrcaProviders: () => ipcRenderer.invoke('ai:getOrcaProviders'),
     approvePlan: (sid) => ipcRenderer.invoke('ai:agent-plan-approve', sid),
     rejectPlan: (sid) => ipcRenderer.invoke('ai:agent-plan-reject', sid),
     approveDestructive: (sid) => ipcRenderer.invoke('ai:agent-destructive-approve', sid),
@@ -139,22 +132,6 @@ const loom: Loom = {
       ipcRenderer.send('ai:agent-chat-stream', id, messages, workspacePath, openFiles, options);
       return () => { ipcRenderer.send('ai:chat-stream-abort', id); cleanup(); };
     },
-    subAgentStream: (request, workspacePath, openFiles, onChunk, onEnd, onError) => {
-      const id = crypto.randomUUID();
-      const chunkListener = (_e: IpcRendererEvent, rid: string, chunk: unknown) => { if (rid === id) onChunk(chunk as LoomSubAgentChunk); };
-      const endListener = (_e: IpcRendererEvent, rid: string) => { if (rid === id) { onEnd(); cleanup(); } };
-      const errorListener = (_e: IpcRendererEvent, rid: string, error: string) => { if (rid === id) { onError(new Error(error)); cleanup(); } };
-      const cleanup = () => {
-        ipcRenderer.removeListener('ai:sub-agent-chunk', chunkListener);
-        ipcRenderer.removeListener('ai:sub-agent-end', endListener);
-        ipcRenderer.removeListener('ai:sub-agent-error', errorListener);
-      };
-      ipcRenderer.on('ai:sub-agent-chunk', chunkListener);
-      ipcRenderer.on('ai:sub-agent-end', endListener);
-      ipcRenderer.on('ai:sub-agent-error', errorListener);
-      ipcRenderer.send('ai:sub-agent-stream', id, request, workspacePath, openFiles);
-      return () => { ipcRenderer.send('ai:chat-stream-abort', id); cleanup(); };
-    },
   },
   cliAgents: {
     list: () => ipcRenderer.invoke('cli-agents:list'),
@@ -162,22 +139,15 @@ const loom: Loom = {
   },
   agentTasks: {
     list: () => ipcRenderer.invoke('agent-tasks:list'),
-    get: (taskId) => ipcRenderer.invoke('agent-tasks:get', taskId),
     cancel: (taskId) => ipcRenderer.invoke('agent-tasks:cancel', taskId),
     retry: (taskId) => ipcRenderer.invoke('agent-tasks:retry', taskId),
   },
   plugins: {
     getAll: () => ipcRenderer.invoke('plugins:getAll'),
     setEnabled: (id, enabled) => ipcRenderer.invoke('plugins:setEnabled', id, enabled),
-    install: (pluginPath) => ipcRenderer.invoke('plugins:install', pluginPath),
     uninstall: (id) => ipcRenderer.invoke('plugins:uninstall', id),
     getCommands: () => ipcRenderer.invoke('plugins:getCommands'),
     executeCommand: (id, ...args) => ipcRenderer.invoke('plugins:executeCommand', id, ...args),
-    getConfigurations: () => ipcRenderer.invoke('plugins:getConfigurations'),
-    getUserConfig: () => ipcRenderer.invoke('plugins:getUserConfig'),
-    setUserConfig: (key, value) => ipcRenderer.invoke('plugins:setUserConfig', key, value),
-    getNotifications: () => ipcRenderer.invoke('plugins:getNotifications'),
-    clearNotifications: () => ipcRenderer.invoke('plugins:clearNotifications'),
     installFromFile: () => ipcRenderer.invoke('plugins:installFromFile'),
     getWebviewPanels: () => ipcRenderer.invoke('plugins:getWebviewPanels'),
     postMessageToWebview: (panelId, message) => ipcRenderer.invoke('plugins:postMessageToWebview', panelId, message),
@@ -189,28 +159,14 @@ const loom: Loom = {
   },
   skills: {
     getAll: () => ipcRenderer.invoke('skills:getAll'),
-    getByCategory: (category) => ipcRenderer.invoke('skills:getByCategory', category),
-    resolvePrompt: (skillId, variables) =>
-      ipcRenderer.invoke('skills:resolvePrompt', skillId, variables),
   },
   // Extension Marketplace (Cursor / OpenVSX 互通)
   marketplace: {
     list: (query) => ipcRenderer.invoke('marketplace:list', query),
     install: (id) => ipcRenderer.invoke('marketplace:install', id),
     uninstall: (id) => ipcRenderer.invoke('marketplace:uninstall', id),
-    listInstalled: () => ipcRenderer.invoke('marketplace:list-installed'),
   },
-  mcp: {
-    getServers: () => ipcRenderer.invoke('mcp:getServers'),
-    addServer: (config) => ipcRenderer.invoke('mcp:addServer', config),
-    updateServer: (id, patch) => ipcRenderer.invoke('mcp:updateServer', id, patch),
-    removeServer: (id) => ipcRenderer.invoke('mcp:removeServer', id),
-    connect: (serverId) => ipcRenderer.invoke('mcp:connect', serverId),
-    disconnect: (serverId) => ipcRenderer.invoke('mcp:disconnect', serverId),
-    getTools: () => ipcRenderer.invoke('mcp:getTools'),
-    callTool: (serverId, toolName, args) =>
-      ipcRenderer.invoke('mcp:callTool', serverId, toolName, args),
-  },
+  mcp: {},
   settings: {
     getAll: () => ipcRenderer.invoke('settings:getAll'),
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
@@ -218,30 +174,14 @@ const loom: Loom = {
   },
   recent: {
     getFolders: () => ipcRenderer.invoke('recent:getFolders'),
-    clearFolders: () => ipcRenderer.invoke('recent:clearFolders'),
   },
-  conversations: {
-    save: (projectPath, messages) => ipcRenderer.invoke('conversations:save', projectPath, messages),
-    load: (projectPath) => ipcRenderer.invoke('conversations:load', projectPath),
-    list: () => ipcRenderer.invoke('conversations:list'),
-    delete: (projectPath) => ipcRenderer.invoke('conversations:delete', projectPath),
-    clear: () => ipcRenderer.invoke('conversations:clear'),
-    search: (query, limit) => ipcRenderer.invoke('conversations:search', query, limit),
-    export: (projectPath, format) =>
-      ipcRenderer.invoke('conversations:export', projectPath, format),
-  },
+  conversations: {},
   team: {
     loadRules: (workspacePath) => ipcRenderer.invoke('team:loadRules', workspacePath),
     saveRules: (workspacePath, content) => ipcRenderer.invoke('team:saveRules', workspacePath, content),
     getUser: () => ipcRenderer.invoke('team:getUser'),
-    signIn: (credentials) => ipcRenderer.invoke('team:signIn', credentials),
-    signOut: () => ipcRenderer.invoke('team:signOut'),
   },
-  telemetry: {
-    setConfig: (config) => ipcRenderer.invoke('telemetry:setConfig', config),
-    getAuditLog: () => ipcRenderer.invoke('telemetry:getAuditLog'),
-    clearAuditLog: () => ipcRenderer.invoke('telemetry:clearAuditLog'),
-  },
+  telemetry: {},
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:open-file'),
     openFolder: async () => {
@@ -261,7 +201,6 @@ const loom: Loom = {
     readFile: (p) => ipcRenderer.invoke('fs:read-file', p),
     writeFile: (p, c) => ipcRenderer.invoke('fs:write-file', p, c),
     readDir: (p) => ipcRenderer.invoke('fs:read-dir', p),
-    stat: (p) => ipcRenderer.invoke('fs:stat', p),
     exists: (p) => ipcRenderer.invoke('fs:exists', p),
     mkdir: (p) => ipcRenderer.invoke('fs:mkdir', p),
     deletePath: (p) => ipcRenderer.invoke('fs:delete', p),
@@ -279,7 +218,6 @@ const loom: Loom = {
     push: (cwd) => ipcRenderer.invoke('git:push', cwd),
     checkout: (cwd, branch) => ipcRenderer.invoke('git:checkout', cwd, branch),
     log: (cwd, count) => ipcRenderer.invoke('git:log', cwd, count),
-    diff: (cwd, file) => ipcRenderer.invoke('git:diff', cwd, file),
     show: (cwd, file) => ipcRenderer.invoke('git:show', cwd, file),
   },
   terminal: {
@@ -302,29 +240,9 @@ const loom: Loom = {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
-    onMaximized: (cb) => {
-      const listener = (_e: IpcRendererEvent, m: boolean) => cb(m);
-      ipcRenderer.on('window:maximized', listener);
-      return () => ipcRenderer.removeListener('window:maximized', listener);
-    },
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
-    onAvailable: (cb) => {
-      const listener = (_e: IpcRendererEvent, info: { version: string; releaseDate?: string }) => cb(info);
-      ipcRenderer.on('update:available', listener);
-      return () => ipcRenderer.removeListener('update:available', listener);
-    },
-    onNotAvailable: (cb) => {
-      const listener = () => cb();
-      ipcRenderer.on('update:not-available', listener);
-      return () => ipcRenderer.removeListener('update:not-available', listener);
-    },
-    onError: (cb) => {
-      const listener = (_e: IpcRendererEvent, message: string) => cb(message);
-      ipcRenderer.on('update:error', listener);
-      return () => ipcRenderer.removeListener('update:error', listener);
-    },
   },
   app: {
     onOpenFolderRequest: (cb) => {
