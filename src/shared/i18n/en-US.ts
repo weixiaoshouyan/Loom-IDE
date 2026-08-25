@@ -47,11 +47,41 @@ export const enUS = {
     helpCheckUpdates: 'Check for Updates...',
   },
 
+  // ---- Command palette labels (app-commands.ts) ----
+  command: {
+    fileOpen: 'Open File',
+    folderOpen: 'Open Folder',
+    folderClose: 'Close Folder',
+    fileNew: 'New File',
+    fileSave: 'Save File',
+    fileSaveAll: 'Save All',
+    viewExplorer: 'Explorer',
+    viewSearch: 'Search',
+    viewGit: 'Source Control',
+    viewExtensions: 'Extensions',
+    viewOutline: 'Outline',
+    viewTerminal: 'Terminal',
+    viewSidebar: 'Toggle Sidebar',
+    viewCommandPalette: 'Command Palette',
+    viewSplitEditor: 'Split Editor',
+    aiToggle: 'Toggle AI Panel',
+    settingsOpen: 'Open Settings',
+    themeDark: 'Dark Theme',
+    themeLight: 'Light Theme',
+    themeSystem: 'System Theme',
+    fileRevert: 'Revert File',
+    fileHistory: 'File Local History',
+    editorFormat: 'Format Document',
+    editorComment: 'Toggle Line Comment',
+    debugRun: 'Start Debugging',
+    workspaceRules: 'Workspace Rules (.loomrules)',
+  },
   sidebar: {
     codeOutline: 'OUTLINE',
     explorer: 'Explorer',
     newFile: 'New File',
     newFolder: 'New Folder',
+    createFailed: 'Create failed',
     refresh: 'Refresh',
     openFolder: 'Open Folder',
     closeFolder: 'Close Folder',
@@ -116,6 +146,7 @@ export const enUS = {
     tagline: 'AI-native coding workspace — plan, edit, review, verify, all in one flow.',
     notConfigured: 'Not configured',
     rulesActiveChip: 'Rules Active',
+    rulesActiveTitleLoomrules: '.loom/rules rules are active; the Agent injects them into its system prompt',
     rulesActiveTitle: 'AI rules for this workspace (.loom/rules) are active',
     configureModel: 'Configure Model',
     openAgent: 'Open Agent',
@@ -157,6 +188,15 @@ export const enUS = {
     addAndPullModels: 'Added & pulled {count} models',
     fetchFailed: 'Fetch failed',
     customGroup: 'Custom',
+    group_domestic: 'Domestic Picks',
+    group_international: 'International',
+    otherGroup: 'Other',
+    tag_costEffective: 'Cost-effective',
+    tag_recommended: 'Recommended',
+    tag_longContext: 'Long Context',
+    tag_strongCapability: 'Strong',
+    orcaOnline: 'Online v{version}',
+    orcaOffline: 'Offline',
     // Section titles
     sectionProviders: 'AI Providers',
     sectionProfiles: 'Agent Profiles',
@@ -327,6 +367,20 @@ export const enUS = {
     sendHintEnter: 'Enter send',
     sendHintShiftEnter: 'Shift + Enter newline',
     sendHintAt: '@ mention file',
+    reviewRollbackAria: 'Roll back {file}',
+    reviewAcceptAria: 'Accept {file}',
+    closeTerminalAria: 'Close terminal',
+    compareModelAAria: 'Compare model A',
+    compareModelBAria: 'Compare model B',
+    useSkillAria: 'Use skill {name}',
+    mentionFileOrSymbolAria: 'Reference files or symbols',
+    closeAria: 'Close',
+    notifyRejectedDisk: 'Rejected {file}, but it may have been written to disk — press Ctrl+Z to undo manually',
+    notifyRejected: 'Rejected {file}; the agent will skip this change',
+    cliAgentFailed: 'CLI Agent failed (exit code {code})',
+    checkpointLoadFailed: 'Could not load checkpoint (it may have expired or been deleted)',
+    checkpointRestored: 'Resumed run {id} — send a message to continue',
+    checkpointRestoreFailed: 'Restore failed',
   },
 
   agentHistory: {
@@ -407,6 +461,8 @@ export const enUS = {
     applyTitle: 'Apply accepted changes (Enter)',
     apply: 'Apply',
     diffPreviewAria: 'Code diff preview',
+    hunksAcceptedCount: '{accepted}/{total} hunks accepted',
+    hunkAccepted: '✓ Accepted',
     markUnaccepted: 'Unaccept this hunk',
     markAccepted: 'Accept this hunk',
     hint: 'Enter apply · Esc cancel · Click "Accept this hunk" to select individually',
@@ -462,6 +518,10 @@ export const enUS = {
     snippetLanguage: 'Language',
     snippetBody: 'Body',
     selectASnippet: 'Select a snippet to view',
+    mySnippetPlaceholder: 'My Snippet',
+    descriptionPlaceholder: 'What this snippet does',
+    allLanguages: 'All Languages',
+    bodyPlaceholder: 'Snippet content with ${1:placeholders}',
   },
 
   git: {
@@ -498,6 +558,7 @@ export const enUS = {
     viewDiff: 'View Diff',
     branch: 'Branch',
     noProvider: 'No source control provider registered',
+    error: 'Error: ',
   },
 
   search: {
@@ -517,6 +578,12 @@ export const enUS = {
     noResultsHint: 'Try a different search term',
     inputKeyword: 'Enter a keyword to search',
     resultSummary: '{matches} matches · {files} files',
+    replacedSummary: 'Replaced {done}',
+    replacedFailSuffix: ', {failed} files failed',
+    matchCase: 'Match Case',
+    matchWholeWord: 'Match Whole Word',
+    useRegex: 'Use Regex',
+    toggleReplace: 'Toggle Replace',
   },
 
   extensions: {
@@ -536,6 +603,8 @@ export const enUS = {
     createSample: 'Sample',
     noExtensions: 'No extensions found',
     noExtensionsHint: 'Click "Install from Folder" to load .loom-sample-plugin',
+    builtInBadge: 'Built-in',
+    activeBadge: 'Active',
   },
 
   marketplace: {
@@ -634,6 +703,47 @@ export const enUS = {
     debugNoVariables: '(no local variables)',
   },
 
+  // ---- Debug / runtime state panel (DebugPanel.tsx) ----
+  debugPanel: {
+    loadingState: 'Loading runtime state…',
+    retry: 'Retry',
+    refresh: 'Refresh',
+    updated: 'updated {time}',
+    appSection: 'App',
+    version: 'Version',
+    enabled: 'Enabled',
+    noActiveStreams: 'No active AI streams',
+    configMasked: 'Config (masked)',
+  },
+
+  // ---- Command palette (CommandPalette.tsx) ----
+  commandPalette: {
+    listAria: 'Commands and files',
+    symbols: 'Symbols',
+    files: 'Files',
+    recentFiles: 'Recent Files',
+    builtin: 'Built-in',
+    extensions: 'Extensions',
+    placeholderCommand: 'Type a command...',
+    placeholderSymbols: 'Search symbols... (functions, classes, types)',
+    placeholderHelp: 'Show help',
+    placeholderFiles: 'Search files by name... (> commands, @ symbols)',
+    placeholderOpenFolder: 'Open a folder first',
+    tagCommands: 'Commands',
+    tagSymbols: 'Symbols',
+    tagFiles: 'Files',
+    tagRecent: 'Recent',
+  },
+
+  // ---- Markdown rendered code blocks (markdown-renderer.ts) ----
+  markdownCode: {
+    copy: 'Copy code',
+    copyBtn: 'Copy',
+    apply: 'Apply',
+    applyTo: 'Apply this code to {file}',
+    applyToActive: 'Apply this code to active file',
+  },
+
   // ---- Find & Replace bar (FindReplaceBar.tsx) ----
   find: {
     findPlaceholder: 'Find',
@@ -670,6 +780,14 @@ export const enUS = {
 
   terminal: {
     processExited: '[Process exited, code {code}]',
+    exitCodeLabel: 'exit code {code}',
+    exitNormal: 'exited normally',
+    exitInterrupted: 'interrupted (Ctrl+C)',
+    exitGenericError: 'exited with an error',
+    exitUsageError: 'command usage error',
+    exitPermissionDenied: 'permission denied',
+    exitCommandNotFound: 'command not found',
+    processExitedWithLabel: '[{label}]',
   },
 
   app: {
@@ -681,6 +799,11 @@ export const enUS = {
     closeFolderTitle: 'Close Folder',
     closeFolderConfirm: '{count} files have unsaved changes. Close anyway?',
     folderClosed: 'Closed current folder',
+    close: 'Close',
+    saveBlockedTruncated: 'File {name} is too large; the save was blocked to prevent truncation',
+    saveBlockedTruncatedShort: 'Could not save {name} (too large)',
+    bootFailed: 'Loom IDE failed to start',
+    bootRootMissing: '#root element not found. Check src/renderer/index.html.',
     fileSaved: 'Saved: {file}',
     saveAsFailed: 'Save As failed: {msg}',
     saveFailed: 'Save failed {file}: {msg}',

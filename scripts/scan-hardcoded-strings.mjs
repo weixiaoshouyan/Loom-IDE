@@ -50,10 +50,12 @@ for (const file of walk(ROOT)) {
   const src = readFileSync(file, 'utf-8');
   const lines = src.split('\n');
 
-  // 1) JSX 文本节点：>English words<（含中文也提示，因为 zh 默认也要走 t() 便于 en 切换）
+  // 1) JSX 文本节点：>English words< 或 >中文<（zh 默认也要走 t() 便于 en 切换）
   const textRe = />([A-Za-z][A-Za-z ,.'"!?/:;()]{2,})</g;
+  const cjkTextRe = />([^<>{}\n]*[\u4e00-\u9fff][^<>{}\n]*)</g;
   // 2) 属性值：title="..." placeholder="..." aria-label="..." alt="..."
   const attrRe = /(?:title|placeholder|aria-label|alt)="([A-Za-z][^"]{2,})"/g;
+  const cjkAttrRe = /(?:title|placeholder|aria-label|alt)="([^"]*[\u4e00-\u9fff][^"]*)"/g;
 
   lines.forEach((line, i) => {
     let m;
@@ -64,12 +66,24 @@ for (const file of walk(ROOT)) {
       hits++;
       console.log(`${file.replace(ROOT, '')}:${i + 1}  [JSX文本] "${text.slice(0, 60)}"`);
     }
+    cjkTextRe.lastIndex = 0;
+    while ((m = cjkTextRe.exec(line)) !== null) {
+      const text = m[1].trim();
+      if (!text) continue;
+      hits++;
+      console.log(`${file.replace(ROOT, '')}:${i + 1}  [JSX中文] "${text.slice(0, 60)}"`);
+    }
     attrRe.lastIndex = 0;
     while ((m = attrRe.exec(line)) !== null) {
       const text = m[1].trim();
       if (isAllowed(text) || /^[a-z0-9.-]+$/.test(text) || /https?:/.test(text)) continue;
       hits++;
       console.log(`${file.replace(ROOT, '')}:${i + 1}  [属性] ${m[0].slice(0, 80)}`);
+    }
+    cjkAttrRe.lastIndex = 0;
+    while ((m = cjkAttrRe.exec(line)) !== null) {
+      hits++;
+      console.log(`${file.replace(ROOT, '')}:${i + 1}  [中文属性] ${m[0].slice(0, 80)}`);
     }
   });
 }

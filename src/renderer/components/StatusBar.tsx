@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { t } from '@/shared/i18n';
 import type { OpenFile } from '../App';
 import { getLoom } from '../loom-ipc';
 import { emitLoomEvent, onLoomEvent } from '../loom-events';
@@ -123,9 +124,9 @@ function StatusBar({
           </div>
         )}
         {rulesActive && (
-          <div className="statusbar-item rules-active" title="本工作区 AI 规则 (.loomrules) 已生效">
+          <div className="statusbar-item rules-active" title={t('welcome.rulesActiveTitleLoomrules')}>
             <span className="statusbar-rules-dot" />
-            规则生效
+            {t('welcome.rulesActiveChip')}
           </div>
         )}
       </div>

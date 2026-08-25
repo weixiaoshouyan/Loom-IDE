@@ -15,6 +15,7 @@
  * reaching the renderer.
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { t } from '@/shared/i18n';
 import { getLoom } from '../loom-ipc';
 
 interface DebugState {
@@ -96,11 +97,11 @@ export default function DebugPanel() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  if (loading) return <div className="debug-panel">Loading runtime state…</div>;
+  if (loading) return <div className="debug-panel">{t('debugPanel.loadingState')}</div>;
   if (error) return (
     <div className="debug-panel debug-error">
       <strong>Error: </strong>{error}
-      <button className="debug-refresh-btn" onClick={refresh}>Retry</button>
+      <button className="debug-refresh-btn" onClick={refresh}>{t('debugPanel.retry')}</button>
     </div>
   );
   if (!state) return null;
@@ -110,9 +111,9 @@ export default function DebugPanel() {
   return (
     <div className="debug-panel">
       <div className="debug-header">
-        <h3>Runtime State</h3>
-        <span className="debug-timestamp">updated {new Date(s.collectedAt).toLocaleTimeString()}</span>
-        <button className="debug-refresh-btn" onClick={refresh}>Refresh</button>
+        <h3>{t('panel.runtimeState')}</h3>
+        <span className="debug-timestamp">{t('debugPanel.updated', { time: new Date(s.collectedAt).toLocaleTimeString() })}</span>
+        <button className="debug-refresh-btn" onClick={refresh}>{t('debugPanel.refresh')}</button>
       </div>
 
       <Section title={`OS · ${s.os?.platform || '?'} ${s.os?.arch || ''}`}>
@@ -129,8 +130,8 @@ export default function DebugPanel() {
         <KV label="Heap" value={s.node ? `${s.node.memoryUsageMB.heapUsed} / ${s.node.memoryUsageMB.heapTotal} MB` : undefined} />
       </Section>
 
-      <Section title="App">
-        <KV label="Version" value={s.app?.version} />
+      <Section title={t('debugPanel.appSection')}>
+        <KV label={t('debugPanel.version')} value={s.app?.version} />
         <KV label="Data Dir" value={s.app?.dataDir} />
         <KV label="History Dir Size" value={s.app ? formatBytes(s.app.historyDirSizeBytes) : undefined} />
       </Section>
@@ -151,7 +152,7 @@ export default function DebugPanel() {
       <Section title={`Active Streams (${s.streams?.length || 0})`}>
         {s.streams && s.streams.length > 0 ? (
           <MonoList items={s.streams.map((st) => `${st.id.slice(0, 16)} · started ${new Date(st.startedAt).toLocaleTimeString()}`)} />
-        ) : <span className="debug-empty">No active AI streams</span>}
+        ) : <span className="debug-empty">{t('debugPanel.noActiveStreams')}</span>}
       </Section>
 
       <Section title={`Permissions · ${s.permissions?.deniedAttempts || 0} denied`}>
@@ -168,7 +169,7 @@ export default function DebugPanel() {
       <Section title={`Plugins (${s.plugins?.length || 0})`}>
         {s.plugins && s.plugins.length > 0 ? (
           <table className="debug-table">
-            <thead><tr><th>ID</th><th>Version</th><th>Enabled</th></tr></thead>
+            <thead><tr><th>ID</th><th>{t('debugPanel.version')}</th><th>{t('debugPanel.enabled')}</th></tr></thead>
             <tbody>
               {s.plugins.map((p) => (
                 <tr key={p.id}>
@@ -182,7 +183,7 @@ export default function DebugPanel() {
         ) : <span className="debug-empty">No plugins</span>}
       </Section>
 
-      <Section title="Config (masked)" defaultOpen={false}>
+      <Section title={t('debugPanel.configMasked')} defaultOpen={false}>
         <pre className="debug-config">{JSON.stringify(s.config, null, 2)}</pre>
       </Section>
     </div>

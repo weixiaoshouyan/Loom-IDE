@@ -8,6 +8,7 @@
  * 依赖通过 options 注入；逻辑与渲染解耦，可独立测试。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '@/shared/i18n';
 import type { NotificationType } from '../components/Notification';
 import type { Message, ToolCallDisplay } from '../components/AIAgent';
 import type { AgentReviewItem } from '../agent-review-queue';
@@ -143,7 +144,7 @@ export function useAgentChat(opts: UseAgentChatOptions) {
     if (item && item.status === 'pending') {
       onApplyEdit?.(item.filePath, item.modified);
       onOpenFile?.(item.filePath, item.modified);
-      notify(`已接受 ${basename(item.filePath)}`, 'success');
+      notify(t('agent.notifyAccepted', { file: basename(item.filePath) }), 'success');
     }
     setReviewQueue(prev => acceptReviewItem(prev, id));
   }, [notify, onApplyEdit, onOpenFile, reviewQueue]);
@@ -160,9 +161,9 @@ export function useAgentChat(opts: UseAgentChatOptions) {
       } catch { /* IPC 失败时按未知处理，仅本地移除 */ }
     }
     if (applied) {
-      notify(`已拒绝 ${basename(item.filePath)}，但该修改可能已写入磁盘，请按 Ctrl+Z 手动撤销`, 'info');
+      notify(t('agent.notifyRejectedDisk', { file: basename(item.filePath) }), 'info');
     } else {
-      notify(`已拒绝 ${basename(item.filePath)}，agent 将跳过该修改`, 'info');
+      notify(t('agent.notifyRejected', { file: basename(item.filePath) }), 'info');
     }
     setReviewQueue(prev => rejectReviewItem(prev, id));
   }, [notify, reviewQueue]);
@@ -302,10 +303,10 @@ export function useAgentChat(opts: UseAgentChatOptions) {
         const stdout = result?.stdout || '';
         const stderr = result?.stderr || '';
         if (result?.ok === false || (typeof result?.exitCode === 'number' && result.exitCode !== 0)) {
-          appendAssistantChunk(requestId, stderr || `CLI Agent 失败（退出码 ${result?.exitCode}）`);
+          appendAssistantChunk(requestId, stderr || t('agent.cliAgentFailed', { code: result?.exitCode ?? '?' }));
           task.failTaskWith(stderr || `CLI Agent failed: ${result.exitCode}`);
         } else {
-          appendAssistantChunk(requestId, stdout || 'CLI Agent 已完成，但没有输出。');
+          appendAssistantChunk(requestId, stdout || t('agent.pluginDoneEmpty'));
           task.markCompleted();
         }
         setLoading(false);

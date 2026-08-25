@@ -187,10 +187,10 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
             </button>
           </div>
           <div className="search-options">
-            <button className={`search-option-btn ${caseSensitive ? 'active' : ''}`} onClick={() => setCaseSensitive(!caseSensitive)} title="Match Case" aria-label="Match Case">Aa</button>
-            <button className={`search-option-btn ${wholeWord ? 'active' : ''}`} onClick={() => setWholeWord(!wholeWord)} title="Match Whole Word" aria-label="Match Whole Word">ab</button>
-            <button className={`search-option-btn ${useRegex ? 'active' : ''}`} onClick={() => setUseRegex(!useRegex)} title="Use Regex" aria-label="Use Regex">.*</button>
-            <button className={`search-option-btn ${showReplace ? 'active' : ''}`} onClick={() => setShowReplace(!showReplace)} title="Toggle Replace" aria-label="Toggle Replace">
+            <button className={`search-option-btn ${caseSensitive ? 'active' : ''}`} onClick={() => setCaseSensitive(!caseSensitive)} title={t('search.matchCase')} aria-label={t('search.matchCase')}>Aa</button>
+            <button className={`search-option-btn ${wholeWord ? 'active' : ''}`} onClick={() => setWholeWord(!wholeWord)} title={t('search.matchWholeWord')} aria-label={t('search.matchWholeWord')}>ab</button>
+            <button className={`search-option-btn ${useRegex ? 'active' : ''}`} onClick={() => setUseRegex(!useRegex)} title={t('search.useRegex')} aria-label={t('search.useRegex')}>.*</button>
+            <button className={`search-option-btn ${showReplace ? 'active' : ''}`} onClick={() => setShowReplace(!showReplace)} title={t('search.toggleReplace')} aria-label={t('search.toggleReplace')}>
               <svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 4l3-2v3h6l-3 2v-3H2z" fill="none" stroke="currentColor" strokeWidth="1"/><path d="M14 12l-3 2v-3H5l3-2v3h6z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
             </button>
           </div>

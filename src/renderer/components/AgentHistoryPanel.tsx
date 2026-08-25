@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '@/shared/i18n';
 import type { ChatSession } from './AIAgent';
 
 interface Props {
@@ -13,15 +14,15 @@ export default function AgentHistoryPanel({ sessions, onRestore, onDelete, onClo
   return (
     <div className="ai-history-panel" data-testid="ai-history-panel">
       <div className="ai-history-header">
-        <div className="ai-history-title">历史对话</div>
+        <div className="ai-history-title">{t('agentHistory.title')}</div>
         <div className="ai-history-count">{sessions.length}</div>
-        <button type="button" className="ai-history-close" aria-label="关闭历史对话" onClick={onClose}>
+        <button type="button" className="ai-history-close" aria-label={t('agentHistory.closeAria')} onClick={onClose}>
           x
         </button>
       </div>
       <div className="ai-history-list">
         {sessions.length === 0 ? (
-          <div className="ai-history-empty">暂无历史对话。完成一次对话后会自动保存到这里。</div>
+          <div className="ai-history-empty">{t('agentHistory.noHistory')}</div>
         ) : (
           sessions.map(session => (
             <button
@@ -34,7 +35,7 @@ export default function AgentHistoryPanel({ sessions, onRestore, onDelete, onClo
               <span className="ai-history-item-icon">#</span>
               <span className="ai-history-item-body">
                 <span className="ai-history-item-name">{session.title}</span>
-                <span className="ai-history-item-preview">{session.preview || '无摘要'}</span>
+                <span className="ai-history-item-preview">{session.preview || t('agentHistory.noSummary')}</span>
                 <span className="ai-history-item-meta">
                   {new Date(session.updatedAt).toLocaleString()}
                 </span>
@@ -43,7 +44,7 @@ export default function AgentHistoryPanel({ sessions, onRestore, onDelete, onClo
                 role="button"
                 tabIndex={0}
                 className="ai-history-item-delete"
-                aria-label={`删除历史对话 ${session.title}`}
+                aria-label={t('agentHistory.deleteHistoryAria', { title: session.title })}
                 onClick={event => {
                   event.stopPropagation();
                   onDelete(session.id);

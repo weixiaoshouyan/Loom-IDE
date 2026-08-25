@@ -1,4 +1,5 @@
 import React, { useEffect, useCallback } from 'react';
+import { t } from '@/shared/i18n';
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -69,7 +70,7 @@ function NotificationToast({ item, onDismiss }: { item: NotificationItem; onDism
         {iconMap[item.type]}
       </span>
       <span className="notification-message">{item.message}</span>
-      <button className="notification-close" onClick={dismiss} title="关闭" aria-label="关闭通知">
+      <button className="notification-close" onClick={dismiss} title={t('notification.closeNotification')} aria-label={t('notification.closeNotification')}>
         <svg viewBox="0 0 16 16" width="12" height="12">
           <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.4" />
         </svg>

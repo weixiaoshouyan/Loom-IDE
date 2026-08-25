@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { t } from '@/shared/i18n';
 import { getLoom } from '../loom-ipc';
 import { emitLoomEvent } from '../loom-events';
 
@@ -29,43 +30,43 @@ export default function TeamPanel({ workspacePath, onClose }: Props) {
 
   const saveRules = async () => {
     await getLoom()?.team?.saveRules?.(workspacePath, rules);
-    emitLoomEvent('loom:notify', { message: '团队规则已保存', type: 'success' });
+    emitLoomEvent('loom:notify', { message: t('team.rulesSaved'), type: 'success' });
   };
 
   return (
     <div className="team-panel" style={{ padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>团队协作</h3>
-        <button className="ai-input-action" onClick={onClose} aria-label="关闭">×</button>
+        <h3 style={{ margin: 0 }}>{t('team.title')}</h3>
+        <button className="ai-input-action" onClick={onClose} aria-label={t('team.closeAria')}>×</button>
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <strong>当前用户</strong>
+        <strong>{t('team.currentUser')}</strong>
         <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
-          {user ? `${user.name || user.email} (${user.email})` : '未登录'}
+          {user ? `${user.name || user.email} (${user.email})` : t('team.notLoggedIn')}
         </div>
       </div>
 
       <div style={{ marginBottom: 8 }}>
-        <strong>.loom/rules 团队规则</strong>
+        <strong>{t('team.rulesLabel')}</strong>
         <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '4px 0 8px' }}>
-          可输入 Markdown 或 JSON；Agent 会将其注入系统提示。
+          {t('team.rulesHint')}
         </p>
       </div>
 
       {loading ? (
-        <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
+        <div style={{ color: 'var(--text-muted)' }}>{t('team.loading')}</div>
       ) : (
         <>
           <textarea
             value={rules}
             onChange={(e) => setRules(e.target.value)}
             style={{ width: '100%', height: 200, fontFamily: 'monospace', fontSize: 13 }}
-            placeholder={`例如：\n{\n  "instructions": "使用 TypeScript 严格模式",\n  "conventions": { "imports": "优先使用 @/ 别名" }\n}`}
+            placeholder={t('team.placeholder')}
           />
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <button className="ai-submit-btn" onClick={saveRules}>保存规则</button>
-            <button className="ai-quick-btn" onClick={onClose}>取消</button>
+            <button className="ai-submit-btn" onClick={saveRules}>{t('team.saveRules')}</button>
+            <button className="ai-quick-btn" onClick={onClose}>{t('team.cancel')}</button>
           </div>
         </>
       )}

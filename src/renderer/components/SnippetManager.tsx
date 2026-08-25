@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { t } from '@/shared/i18n';
 import { confirmDialog } from './ConfirmModal';
 
 interface Snippet {
@@ -390,7 +391,7 @@ export default function SnippetManager({ onClose, onInsert, currentLanguage, loc
                   className="settings-input"
                   value={editForm.name || ''}
                   onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="My Snippet"
+                  placeholder={t('snippets.mySnippetPlaceholder')}
                 />
               </div>
               <div className="settings-group">
@@ -409,7 +410,7 @@ export default function SnippetManager({ onClose, onInsert, currentLanguage, loc
                   className="settings-input"
                   value={editForm.description || ''}
                   onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="What this snippet does"
+                  placeholder={t('snippets.descriptionPlaceholder')}
                 />
               </div>
               <div className="settings-group">
@@ -419,7 +420,7 @@ export default function SnippetManager({ onClose, onInsert, currentLanguage, loc
                   value={editForm.language || 'plaintext'}
                   onChange={e => setEditForm(f => ({ ...f, language: e.target.value }))}
                 >
-                  <option value="*">All Languages</option>
+                  <option value="*">{t('snippets.allLanguages')}</option>
                   <option value="typescript">TypeScript</option>
                   <option value="javascript">JavaScript</option>
                   <option value="python">Python</option>
@@ -435,7 +436,7 @@ export default function SnippetManager({ onClose, onInsert, currentLanguage, loc
                   className="settings-input"
                   value={editForm.body || ''}
                   onChange={e => setEditForm(f => ({ ...f, body: e.target.value }))}
-                  placeholder="Snippet content with ${1:placeholders}"
+                  placeholder={t('snippets.bodyPlaceholder')}
                   style={{ fontFamily: 'monospace', minHeight: 150, resize: 'vertical' }}
                 />
               </div>

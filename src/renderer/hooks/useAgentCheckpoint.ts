@@ -8,6 +8,7 @@
  *   - resumeCheckpointIdRef：下一次发送携带的 checkpointId。
  */
 import { useCallback, useState } from 'react';
+import { t } from '@/shared/i18n';
 import type { NotificationType } from '../components/Notification';
 import type { Message } from '../components/AIAgent';
 
@@ -46,7 +47,7 @@ export function useAgentCheckpoint(opts: {
     try {
       const res = await window.loom?.ai?.checkpointLoad?.(workspacePath, id) as { ok?: boolean; checkpoint?: any } | undefined;
       if (!res?.ok || !res.checkpoint) {
-        notify('无法加载检查点（可能已过期删除）', 'error');
+        notify(t('agent.checkpointLoadFailed'), 'error');
         return;
       }
       const ck = res.checkpoint;
@@ -88,9 +89,9 @@ export function useAgentCheckpoint(opts: {
       onRestoreMessages(restored);
       resumeCheckpointIdRef.current = id;
       setShowResumePanel(false);
-      notify(`已恢复运行 ${id} — 发送消息即可继续`, 'info');
+      notify(t('agent.checkpointRestored', { id }), 'info');
     } catch {
-      notify('恢复失败', 'error');
+      notify(t('agent.checkpointRestoreFailed'), 'error');
     }
   }, [workspacePath, notify, onRestoreMessages]);
 

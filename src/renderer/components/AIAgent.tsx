@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { t } from '@/shared/i18n';
 import {
   getConfiguredModelOptions,
   modelSelectionValue,
@@ -184,31 +185,31 @@ function DiffPreview({
             <button
               type="button"
               className="agent-review-reject"
-              aria-label={`回滚 ${basename(item.filePath)}`}
+              aria-label={t('agent.reviewRollbackAria', { file: basename(item.filePath) })}
               data-testid="agent-change-reject"
               onClick={() => onReject(item.id)}
             >
-              回滚
+              {t('agent.rollback')}
             </button>
             <button
               type="button"
               className="agent-review-accept"
-              aria-label={`接受 ${basename(item.filePath)}`}
+              aria-label={t('agent.reviewAcceptAria', { file: basename(item.filePath) })}
               data-testid="agent-change-accept"
               onClick={() => onAccept(item.id)}
             >
-              接受
+              {t('agent.accept')}
             </button>
           </div>
         )}
       </div>
       <div className="agent-diff-grid">
         <div>
-          <div className="agent-diff-label">原始</div>
+          <div className="agent-diff-label">{t('agent.original')}</div>
           <pre>{item.original || '(new file)'}</pre>
         </div>
         <div>
-          <div className="agent-diff-label">建议</div>
+          <div className="agent-diff-label">{t('agent.suggestion')}</div>
           <pre>{item.modified}</pre>
         </div>
       </div>
@@ -756,7 +757,7 @@ function AIAgent({
       <div className="ai-agent-panel" style={{ width }}>
         <div className="ai-header">
           <span className="ai-header-title">{locale === 'zh-CN' ? '智能体' : 'Agent'}</span>
-          <button type="button" onClick={onClose} className="ai-header-btn" aria-label="关闭 Agent 面板" data-testid="ai-close">
+          <button type="button" onClick={onClose} className="ai-header-btn" aria-label={t('agent.closeAgentPanel')} data-testid="ai-close">
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -769,13 +770,13 @@ function AIAgent({
     <div className="ai-agent-panel" style={{ width }} data-testid="ai-agent-panel">
       <div className="ai-header">
         <div className="ai-header-title">
-          {locale === 'zh-CN' ? '智能体' : 'Agent'} <span className="ai-header-subtitle">{activeProvider?.name || '未配置模型'}</span>
+          {locale === 'zh-CN' ? '智能体' : 'Agent'} <span className="ai-header-subtitle">{activeProvider?.name || t('agent.modelNotConfigured')}</span>
         </div>
         <div className="ai-header-actions">
-          <button type="button" onClick={runTerminalCommand} className="ai-header-btn" title="打开终端" aria-label="打开终端" data-testid="ai-toggle-terminal">
+          <button type="button" onClick={runTerminalCommand} className="ai-header-btn" title={t('agent.openTerminal')} aria-label={t('agent.openTerminal')} data-testid="ai-toggle-terminal">
             <svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="2.5" width="14" height="11" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M4 7l1.8 1.8L4 10.6M7.5 10.5h4" fill="none" stroke="currentColor" strokeWidth="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-          <button type="button" onClick={startNewChat} className="ai-header-btn" title="新对话" aria-label="新对话" data-testid="ai-new-chat">
+          <button type="button" onClick={startNewChat} className="ai-header-btn" title={t('agent.newConversation')} aria-label={t('agent.newConversation')} data-testid="ai-new-chat">
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" stroke-linecap="round"/></svg>
           </button>
           <button
@@ -792,8 +793,8 @@ function AIAgent({
             type="button"
             onClick={() => setShowHistory(value => !value)}
             className="ai-header-btn"
-            title="历史对话"
-            aria-label="历史对话"
+            title={t('agent.history')}
+            aria-label={t('agent.history')}
             data-testid="ai-history"
           >
             <svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M8 4.5v3.7l2.3 1.3" fill="none" stroke="currentColor" strokeWidth="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -802,13 +803,13 @@ function AIAgent({
             type="button"
             onClick={() => { setShowTaskCenter(value => !value); refreshAgentTasks(); }}
             className="ai-header-btn"
-            title="任务中心"
-            aria-label="任务中心"
+            title={t('agent.taskCenter')}
+            aria-label={t('agent.taskCenter')}
             data-testid="ai-task-center"
           >
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 4l1.5 1.5L7 3M3 9l1.5 1.5L7 8M9 4h4M9 9h4" fill="none" stroke="currentColor" strokeWidth="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-          <button type="button" onClick={onClose} className="ai-header-btn" title="关闭面板" aria-label="关闭面板" data-testid="ai-close-panel">
+          <button type="button" onClick={onClose} className="ai-header-btn" title={t('agent.closePanel')} aria-label={t('agent.closePanel')} data-testid="ai-close-panel">
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -818,16 +819,16 @@ function AIAgent({
         <button
           type="button"
           className={`ai-mode-tab ${agentMode ? 'active' : ''}`}
-          aria-label="Agent 模式"
+          aria-label={t('agent.agentMode')}
           data-testid="ai-mode-agent"
           onClick={() => setAgentMode(true)}
         >
-          Agent 模式
+          {t('agent.agentMode')}
         </button>
         <button
           type="button"
           className={`ai-mode-tab ${!agentMode ? 'active' : ''}`}
-          aria-label="聊天模式"
+          aria-label={t('agent.chatMode')}
           data-testid="ai-mode-chat"
           onClick={() => setAgentMode(false)}
         >
@@ -838,20 +839,20 @@ function AIAgent({
             type="checkbox"
             checked={autoApplySafeEdits}
             onChange={event => setAutoApplySafeEdits(event.target.checked)}
-            aria-label="自动应用安全编辑"
+            aria-label={t('agent.autoApplySafeEdits')}
             data-testid="ai-auto-apply"
           />
-          自动应用安全编辑
+          {t('agent.autoApplySafeEdits')}
         </label>
-        <label className="ai-safe-edit-toggle" title="完成后自动运行类型检查与测试，未通过则继续修复">
+        <label className="ai-safe-edit-toggle" title={t('agent.autoApplyTooltip')}>
           <input
             type="checkbox"
             checked={verifyMode}
             onChange={event => setVerifyMode(event.target.checked)}
-            aria-label="完成后验证"
+            aria-label={t('agent.verifyAfterComplete')}
             data-testid="ai-verify-mode"
           />
-          完成后验证
+          {t('agent.verifyAfterComplete')}
         </label>
       </div>
 
@@ -878,7 +879,7 @@ function AIAgent({
         <div className="agent-resume-panel" data-testid="agent-resume-panel">
           <div className="agent-resume-header">
             <span>{locale === 'zh-CN' ? '恢复运行（检查点）' : 'Resume (checkpoints)'}</span>
-            <button type="button" className="ai-header-btn" onClick={() => setShowResumePanel(false)} aria-label="关闭">
+            <button type="button" className="ai-header-btn" onClick={() => setShowResumePanel(false)} aria-label={t('agent.closeAria')}>
               <svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
             </button>
           </div>
@@ -1024,7 +1025,7 @@ function AIAgent({
             <button
               type="button"
               className="ai-header-btn"
-              aria-label="关闭终端"
+              aria-label={t('agent.closeTerminalAria')}
               data-testid="assistant-terminal-close"
               onClick={() => setAssistantTerminalVisible(false)}
             >
@@ -1041,7 +1042,7 @@ function AIAgent({
             <button
               type="button"
               className={`ai-mode-tab ${agentMode ? 'active' : ''}`}
-              aria-label="切换到 Agent"
+              aria-label={t('agent.switchToAgent')}
               data-testid="ai-bottom-agent"
               onClick={() => { setAgentMode(true); setCompareMode(false); }}
             >
@@ -1050,7 +1051,7 @@ function AIAgent({
             <button
               type="button"
               className={`ai-mode-tab ${plannerMode ? 'active' : ''}`}
-              aria-label="计划模式"
+              aria-label={t('agent.planMode')}
               data-testid="ai-plan-mode"
               onClick={() => setPlannerMode(value => !value)}
             >
@@ -1059,7 +1060,7 @@ function AIAgent({
             <button
               type="button"
               className={`ai-mode-tab ${!agentMode ? 'active' : ''}`}
-              aria-label="切换到 Chat"
+              aria-label={t('agent.switchToChat')}
               data-testid="ai-bottom-chat"
               onClick={() => { setAgentMode(false); setCompareMode(false); }}
             >
@@ -1068,11 +1069,11 @@ function AIAgent({
             <button
               type="button"
               className={`ai-mode-tab ${compareMode ? 'active' : ''}`}
-              aria-label="多模型对比"
+              aria-label={t('agent.multiModelCompare')}
               data-testid="ai-compare-tab"
               onClick={() => { setCompareMode(v => !v); if (!compareMode) setAgentMode(false); }}
             >
-              对比
+              {t('agent.compare')}
             </button>
           </div>
 
@@ -1081,11 +1082,11 @@ function AIAgent({
               <select
                 className="ai-model-select"
                 value={compareModelA}
-                aria-label="对比模型 A"
+                aria-label={t('agent.compareModelAAria')}
                 data-testid="ai-compare-model-a"
                 onChange={event => setCompareModelA(event.target.value)}
               >
-                <option value="">模型 A…</option>
+                <option value="">{t('agent.modelA')}</option>
                 {modelOptions.map(o => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
@@ -1094,11 +1095,11 @@ function AIAgent({
               <select
                 className="ai-model-select"
                 value={compareModelB}
-                aria-label="对比模型 B"
+                aria-label={t('agent.compareModelBAria')}
                 data-testid="ai-compare-model-b"
                 onChange={event => setCompareModelB(event.target.value)}
               >
-                <option value="">模型 B…</option>
+                <option value="">{t('agent.modelB')}</option>
                 {modelOptions.map(o => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
@@ -1108,7 +1109,7 @@ function AIAgent({
             <select
               className="ai-model-select"
               value={selectedCliAgent ? `cli:${selectedCliAgent.id}` : modelValue}
-              aria-label="选择模型或 CLI Agent"
+              aria-label={t('agent.selectModelOrCli')}
               data-testid="ai-model-select"
               onChange={event => {
                 const value = event.target.value;
@@ -1121,7 +1122,7 @@ function AIAgent({
               }}
             >
               {modelOptions.length === 0 && (
-                <option value="">请先在设置中填写 API Key 并勾选模型</option>
+                <option value="">{t('agent.configureApiKeyFirst')}</option>
               )}
               {groupedModelOptions.map(([providerName, options]) => (
                 <optgroup key={providerName} label={providerName}>
@@ -1144,7 +1145,7 @@ function AIAgent({
                 key={skill.id}
                 type="button"
                 className={`ai-skill-item ${activeSkillId === skill.id ? 'active' : ''}`}
-                aria-label={`使用技能 ${skill.name}`}
+                aria-label={t('agent.useSkillAria', { name: skill.name })}
                 data-testid={`ai-skill-${skill.id}`}
                 onClick={() => applySkillPrompt(skill)}
               >
@@ -1158,18 +1159,18 @@ function AIAgent({
 
         <div className="ai-input-wrapper">
           {mention.open && (
-            <div className="ai-mention-popover" role="listbox" aria-label="引用文件或符号">
+            <div className="ai-mention-popover" role="listbox" aria-label={t('agent.mentionFileOrSymbolAria')}>
               <div className="ai-mention-header">
                 <span className="ai-mention-title">
-                  {mention.type === 'codebase' ? '🔍 代码库符号（语义检索）' : '📄 引用文件'}
+                  {mention.type === 'codebase' ? `🔍 ${t('agent.codeSymbolSearch')}` : `📄 ${t('agent.mentionFile')}`}
                 </span>
-                <span className="ai-mention-count">↑↓ 选择 · Enter 确认 · Esc 取消</span>
+                <span className="ai-mention-count">{t('agent.symbolHint')}</span>
               </div>
               {mention.results.length === 0 ? (
                 <div className="ai-mention-empty">
                   {mention.type === 'codebase'
-                    ? (mention.query ? '正在搜索符号...' : '输入 @codebase 后跟查询词进行语义检索')
-                    : (mention.query ? '无匹配文件' : '开始输入以搜索文件')}
+                    ? (mention.query ? t('agent.searchingSymbols') : t('agent.typeAtCodebase'))
+                    : (mention.query ? t('agent.noFilesMatch') : t('agent.startTypingToSearch'))}
                 </div>
               ) : (
                 mention.results.map((r, idx) => (
@@ -1202,9 +1203,9 @@ function AIAgent({
             ref={textareaRef}
             className="ai-textarea"
             value={input}
-            aria-label="Agent 输入"
+            aria-label={t('agent.agentInput')}
             data-testid="ai-input"
-            placeholder={hasConfiguredModel ? '问 Agent 实现某个功能... (Enter 发送，Shift+Enter 换行，@ 引用文件，@codebase 语义检索)' : '请先在设置里配置 API Key 并勾选模型'}
+            placeholder={hasConfiguredModel ? t('agent.inputPlaceholder') : t('agent.inputPlaceholderNoModel')}
             onChange={event => {
               setInput(event.target.value);
               detectMention(event.target.value, event.target.selectionStart);
@@ -1247,7 +1248,7 @@ function AIAgent({
             <button
               type="button"
               className="ai-input-action"
-              aria-label="插入已打开文件引用"
+              aria-label={t('agent.insertOpenFile')}
               data-testid="ai-attach-open-files"
               onClick={() => {
                 const names = openFiles.map(file => `@${file.name}`).join(' ');
@@ -1259,28 +1260,28 @@ function AIAgent({
             <button
               type="button"
               className="ai-input-action"
-              aria-label="选择技能"
+              aria-label={t('agent.selectSkill')}
               data-testid="ai-open-skills"
               onClick={() => setShowSkills(value => !value)}
             >
               /
             </button>
             {(loading || (compareMode && compareRunning)) ? (
-              <button type="button" className="ai-send-btn stop" aria-label="停止生成" data-testid="ai-stop" onClick={() => (compareMode ? stopCompare() : stopGeneration)}>
+              <button type="button" className="ai-send-btn stop" aria-label={t('agent.stopGeneration')} data-testid="ai-stop" onClick={() => (compareMode ? stopCompare() : stopGeneration)}>
                 {locale === 'zh-CN' ? '停止' : 'Stop'}
               </button>
             ) : (
-              <button type="button" className="ai-send-btn" aria-label="发送给 Agent" data-testid="ai-send" disabled={compareMode ? (!input.trim() || !compareModelA || !compareModelB || compareRunning) : !canSend} onClick={send}>
-                {compareMode ? (compareRunning ? '对比中…' : '对比') : (locale === 'zh-CN' ? '发送' : 'Send')}
+              <button type="button" className="ai-send-btn" aria-label={t('agent.sendToAgent')} data-testid="ai-send" disabled={compareMode ? (!input.trim() || !compareModelA || !compareModelB || compareRunning) : !canSend} onClick={send}>
+                {compareMode ? (compareRunning ? t('agent.comparing') : t('agent.compare')) : (locale === 'zh-CN' ? '发送' : 'Send')}
               </button>
             )}
           </div>
         </div>
 
         <div className="ai-input-hints">
-          <span>Enter 发送</span>
-          <span>Shift + Enter 换行</span>
-          <span>@ 引用文件</span>
+          <span>{t('agent.sendHintEnter')}</span>
+          <span>{t('agent.sendHintShiftEnter')}</span>
+          <span>{t('agent.sendHintAt')}</span>
           {usageText && <span>{usageText}</span>}
         </div>
       </div>

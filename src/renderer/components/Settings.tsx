@@ -24,17 +24,17 @@ interface AIConfig {
 }
 
 const PROVIDER_META: Record<string, { group: string; tags?: string[] }> = {
-  deepseek: { group: '国产优选', tags: ['性价比', '推荐'] },
-  doubao: { group: '国产优选', tags: ['长上下文'] },
-  dashscope: { group: '国产优选', tags: ['推荐'] },
-  zhipu: { group: '国产优选', tags: ['长上下文'] },
-  moonshot: { group: '国产优选', tags: ['长上下文', '推荐'] },
-  siliconflow: { group: '国产优选', tags: ['性价比'] },
-  xiaomi: { group: '国产优选', tags: ['性价比'] },
-  yi: { group: '国产优选' },
-  baichuan: { group: '国产优选' },
-  minimax: { group: '国产优选' },
-  openai: { group: '国际', tags: ['能力强'] },
+  deepseek: { group: 'domestic', tags: ['costEffective', 'recommended'] },
+  doubao: { group: 'domestic', tags: ['longContext'] },
+  dashscope: { group: 'domestic', tags: ['recommended'] },
+  zhipu: { group: 'domestic', tags: ['longContext'] },
+  moonshot: { group: 'domestic', tags: ['longContext', 'recommended'] },
+  siliconflow: { group: 'domestic', tags: ['costEffective'] },
+  xiaomi: { group: 'domestic', tags: ['costEffective'] },
+  yi: { group: 'domestic' },
+  baichuan: { group: 'domestic' },
+  minimax: { group: 'domestic' },
+  openai: { group: 'international', tags: ['strongCapability'] },
 };
 interface PluginInfo {
   id: string; manifest: { name: string; displayName: string; description: string; version: string; author: string; contributes?: any };
@@ -55,8 +55,8 @@ function OrcaStatusIndicator({ baseUrl }: { baseUrl: string }) {
     window.loom.ai.checkOrcaStatus().then((s: any) => setStatus(s)).catch(() => setStatus(null));
   }, [baseUrl]);
   if (!status) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>...</span>;
-  if (status.ok) return <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)' }} />Online v{status.version}</span>;
-  return <span style={{ fontSize: 11, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--red)' }} />Offline</span>;
+  if (status.ok) return <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)' }} />{t('settings.orcaOnline', { version: status.version || '' })}</span>;
+  return <span style={{ fontSize: 11, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--red)' }} />{t('settings.orcaOffline')}</span>;
 }
 
 export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
@@ -218,7 +218,7 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
       const r = await window.loom.ai.listModels(providerId);
       const refreshed = await window.loom.ai.getConfig();
       setAiConfig(refreshed);
-      setTestResult({ ok: r.ok, msg: r.ok ? `已拉取 ${r.models.length} 个模型` : (r.msg || '拉取失败') });
+      setTestResult({ ok: r.ok, msg: r.ok ? tk('pulledModels').replace('{count}', String(r.models.length)) : (r.msg || tk('fetchFailed')) });
     } catch (e: any) { setTestResult({ ok: false, msg: e.message }); }
     setFetchingModels(null);
   };
@@ -226,10 +226,11 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
   const groupedProviders = () => {
     const groups: Record<string, AIProvider[]> = {};
     for (const p of aiConfig.providers) {
-      const g = (PROVIDER_META[p.id]?.group) || (p.isCustom ? tk('customGroup') : '其他');
+      const meta = PROVIDER_META[p.id];
+      const g = meta ? tk(`group_${meta.group}`) : (p.isCustom ? tk('customGroup') : tk('otherGroup'));
       (groups[g] = groups[g] || []).push(p);
     }
-    const order = ['国产优选', '国际', tk('customGroup'), '其他'];
+    const order = [tk('group_domestic'), tk('group_international'), tk('customGroup'), tk('otherGroup')];
     return Object.entries(groups).sort((a, b) => (order.indexOf(a[0]) + 1) - (order.indexOf(b[0]) + 1));
   };
 
@@ -240,7 +241,7 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
         <div className="settings-provider-header">
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="settings-provider-name">{p.name}</span>
-            {meta?.tags?.map(t => <span key={t} className="settings-tag">{t}</span>)}
+            {meta?.tags?.map(tag => <span key={tag} className="settings-tag">{tk(`tag_${tag}`)}</span>)}
             {aiConfig.activeProviderId === p.id && <span className="settings-provider-active">{tk('active')}</span>}
           </div>
           <div style={{ display: "flex", gap: 4 }}>

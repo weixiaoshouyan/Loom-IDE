@@ -114,7 +114,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
           className={`ext-unified-tab ${extTab === 'marketplace' ? 'active' : ''}`}
           onClick={() => setExtTab('marketplace')}
         >
-          {t('extensions.mark')}
+          {t('extensions.market')}
         </button>
         <button
           className={`ext-unified-tab ${extTab === 'installed' ? 'active' : ''}`}
@@ -174,8 +174,8 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
                   <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setExpanded(isExpanded ? null : ext.id)}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{ext.manifest?.displayName || ext.manifest?.name || ext.id}</span>
-                      {ext.builtin && <span style={{ fontSize: 9, background: 'var(--accent)', color: 'white', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>Built-in</span>}
-                      {ext.activated && <span style={{ fontSize: 9, background: 'var(--green)', color: 'white', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>Active</span>}
+                      {ext.builtin && <span style={{ fontSize: 9, background: 'var(--accent)', color: 'white', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{t('extensions.builtInBadge')}</span>}
+                      {ext.activated && <span style={{ fontSize: 9, background: 'var(--green)', color: 'white', padding: '1px 5px', borderRadius: 3, fontWeight: 600 }}>{t('extensions.activeBadge')}</span>}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ext.manifest?.description}</div>
                     <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>

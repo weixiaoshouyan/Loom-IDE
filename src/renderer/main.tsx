@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { t } from '@/shared/i18n';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import { getLoom } from './loom-ipc';
@@ -45,8 +46,8 @@ if (!rootEl) {
   // Fail loudly so the blank-screen problem is visible in DevTools
   document.body.innerHTML =
     '<div style="font-family:system-ui;padding:24px;color:#f44747;background:#1e1e1e;height:100vh;">' +
-    '<h2>Loom IDE 启动失败</h2>' +
-    '<p>未找到 <code>#root</code> 元素。请检查 <code>src/renderer/index.html</code>。</p>' +
+    `<h2>${t('app.bootFailed')}</h2>` +
+    `<p>${t('app.bootRootMissing')}</p>` +
     '</div>';
   throw new Error('Fatal: #root element not found in HTML');
 }

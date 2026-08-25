@@ -51,11 +51,41 @@ export const zhCN = {
   },
 
   // ---- Sidebar explorer (SidebarExplorerView.tsx) ----
+  // ---- Command palette labels (app-commands.ts) ----
+  command: {
+    fileOpen: '打开文件',
+    folderOpen: '打开文件夹',
+    folderClose: '关闭文件夹',
+    fileNew: '新建文件',
+    fileSave: '保存文件',
+    fileSaveAll: '全部保存',
+    viewExplorer: '资源管理器',
+    viewSearch: '全局搜索',
+    viewGit: '源码管理',
+    viewExtensions: '扩展',
+    viewOutline: '大纲',
+    viewTerminal: '终端',
+    viewSidebar: '切换侧边栏',
+    viewCommandPalette: '命令面板',
+    viewSplitEditor: '拆分编辑器',
+    aiToggle: '切换 AI 面板',
+    settingsOpen: '打开设置',
+    themeDark: '深色主题',
+    themeLight: '浅色主题',
+    themeSystem: '跟随系统主题',
+    fileRevert: '还原文件',
+    fileHistory: '文件本地历史',
+    editorFormat: '格式化文档',
+    editorComment: '切换行注释',
+    debugRun: '启动调试',
+    workspaceRules: '工作区规则 (.loomrules)',
+  },
   sidebar: {
     codeOutline: '代码大纲',
     explorer: '资源管理器',
     newFile: '新建文件',
     newFolder: '新建文件夹',
+    createFailed: '创建失败',
     refresh: '刷新',
     openFolder: '打开文件夹',
     closeFolder: '关闭文件夹',
@@ -123,6 +153,7 @@ export const zhCN = {
     tagline: 'AI 原生的代码工作台：计划、修改、审核、验证，一条链路完成。',
     notConfigured: '未配置',
     rulesActiveChip: '规则生效',
+    rulesActiveTitleLoomrules: '.loom/rules 规则已生效，Agent 会将其注入系统提示',
     rulesActiveTitle: '本工作区 AI 规则 (.loom/rules) 已生效',
     configureModel: '配置模型',
     openAgent: '打开 Agent',
@@ -177,6 +208,15 @@ export const zhCN = {
     addAndPullModels: '已添加并拉取 {count} 个模型',
     fetchFailed: '拉取失败',
     customGroup: '自定义',
+    group_domestic: '国产优选',
+    group_international: '国际',
+    otherGroup: '其他',
+    tag_costEffective: '性价比',
+    tag_recommended: '推荐',
+    tag_longContext: '长上下文',
+    tag_strongCapability: '能力强',
+    orcaOnline: '在线 v{version}',
+    orcaOffline: '离线',
     // Provider card
     name: '名称',
     baseUrl: 'Base URL',
@@ -338,6 +378,20 @@ export const zhCN = {
     sendHintEnter: 'Enter 发送',
     sendHintShiftEnter: 'Shift + Enter 换行',
     sendHintAt: '@ 引用文件',
+    reviewRollbackAria: '回滚 {file}',
+    reviewAcceptAria: '接受 {file}',
+    closeTerminalAria: '关闭终端',
+    compareModelAAria: '对比模型 A',
+    compareModelBAria: '对比模型 B',
+    useSkillAria: '使用技能 {name}',
+    mentionFileOrSymbolAria: '引用文件或符号',
+    closeAria: '关闭',
+    notifyRejectedDisk: '已拒绝 {file}，但该修改可能已写入磁盘，请按 Ctrl+Z 手动撤销',
+    notifyRejected: '已拒绝 {file}，agent 将跳过该修改',
+    cliAgentFailed: 'CLI Agent 失败（退出码 {code}）',
+    checkpointLoadFailed: '无法加载检查点（可能已过期删除）',
+    checkpointRestored: '已恢复运行 {id} — 发送消息即可继续',
+    checkpointRestoreFailed: '恢复失败',
   },
 
   // ---- Agent sub-panels ----
@@ -420,6 +474,8 @@ export const zhCN = {
     applyTitle: '应用已接受的变更 (Enter)',
     apply: '应用',
     diffPreviewAria: '代码差异预览',
+    hunksAcceptedCount: '已接受 {accepted}/{total} 个变更块',
+    hunkAccepted: '✓ 已接受',
     markUnaccepted: '取消接受此块',
     markAccepted: '接受此块',
     hint: 'Enter 应用 · Esc 取消 · 点击「接受此块」逐段选择',
@@ -478,6 +534,10 @@ export const zhCN = {
     snippetLanguage: '语言',
     snippetBody: '内容',
     selectASnippet: '选择一个片段查看',
+    mySnippetPlaceholder: '我的片段',
+    descriptionPlaceholder: '这个片段的用途',
+    allLanguages: '所有语言',
+    bodyPlaceholder: '片段内容，支持 ${1:占位符}',
   },
 
   // ---- Git (SidebarGitView.tsx) ----
@@ -515,6 +575,7 @@ export const zhCN = {
     viewDiff: '查看差异',
     branch: '分支',
     noProvider: '未注册源码控制提供商',
+    error: '错误：',
   },
 
   // ---- Search (SidebarSearchView.tsx) ----
@@ -535,6 +596,12 @@ export const zhCN = {
     noResultsHint: '试试其他搜索词',
     inputKeyword: '输入关键词以搜索',
     resultSummary: '{matches} 个匹配 · {files} 个文件',
+    replacedSummary: '已替换 {done} 处',
+    replacedFailSuffix: '，{failed} 个文件失败',
+    matchCase: '区分大小写',
+    matchWholeWord: '全字匹配',
+    useRegex: '使用正则表达式',
+    toggleReplace: '切换替换',
   },
 
   // ---- Extensions (SidebarExtensionsView.tsx) ----
@@ -555,6 +622,8 @@ export const zhCN = {
     createSample: '示例',
     noExtensions: '未找到扩展',
     noExtensionsHint: '点击"从文件夹安装"加载 .loom-sample-plugin',
+    builtInBadge: '内置',
+    activeBadge: '已激活',
   },
 
   // ---- Extension marketplace (ExtensionMarketplace.tsx) ----
@@ -657,6 +726,47 @@ export const zhCN = {
     debugNoVariables: '（无局部变量）',
   },
 
+  // ---- Debug / runtime state panel (DebugPanel.tsx) ----
+  debugPanel: {
+    loadingState: '正在加载运行时状态…',
+    retry: '重试',
+    refresh: '刷新',
+    updated: '已更新 {time}',
+    appSection: '应用',
+    version: '版本',
+    enabled: '已启用',
+    noActiveStreams: '暂无活动 AI 流',
+    configMasked: '配置（已脱敏）',
+  },
+
+  // ---- Command palette (CommandPalette.tsx) ----
+  commandPalette: {
+    listAria: '命令与文件',
+    symbols: '符号',
+    files: '文件',
+    recentFiles: '最近文件',
+    builtin: '内置命令',
+    extensions: '扩展',
+    placeholderCommand: '输入命令...',
+    placeholderSymbols: '搜索符号...（函数、类、类型）',
+    placeholderHelp: '显示帮助',
+    placeholderFiles: '按名称搜索文件...（> 命令，@ 符号）',
+    placeholderOpenFolder: '请先打开文件夹',
+    tagCommands: '命令',
+    tagSymbols: '符号',
+    tagFiles: '文件',
+    tagRecent: '最近',
+  },
+
+  // ---- Markdown rendered code blocks (markdown-renderer.ts) ----
+  markdownCode: {
+    copy: '复制代码',
+    copyBtn: '复制',
+    apply: '应用',
+    applyTo: '应用此代码到 {file}',
+    applyToActive: '应用此代码到当前文件',
+  },
+
   // ---- Find & Replace bar (FindReplaceBar.tsx) ----
   find: {
     findPlaceholder: '查找',
@@ -696,6 +806,14 @@ export const zhCN = {
   // ---- Terminal (Terminal.tsx) ----
   terminal: {
     processExited: '[进程已退出，退出码 {code}]',
+    exitCodeLabel: '退出码 {code}',
+    exitNormal: '正常退出',
+    exitInterrupted: '已被中断 (Ctrl+C)',
+    exitGenericError: '异常退出',
+    exitUsageError: '命令用法错误',
+    exitPermissionDenied: '权限被拒绝',
+    exitCommandNotFound: '未找到命令',
+    processExitedWithLabel: '[{label}]',
   },
 
   // ---- App-level notifications (App.tsx) ----
@@ -708,6 +826,11 @@ export const zhCN = {
     closeFolderTitle: '关闭文件夹',
     closeFolderConfirm: '{count} 个文件有未保存的修改。确定关闭？',
     folderClosed: '已关闭当前文件夹',
+    close: '关闭',
+    saveBlockedTruncated: '文件 {name} 过大，为防止内容截断已阻止保存',
+    saveBlockedTruncatedShort: '无法保存 {name}（过大）',
+    bootFailed: 'Loom IDE 启动失败',
+    bootRootMissing: '未找到 #root 元素。请检查 src/renderer/index.html。',
     fileSaved: '已保存: {file}',
     saveAsFailed: '另存为失败: {msg}',
     saveFailed: '保存失败 {file}: {msg}',

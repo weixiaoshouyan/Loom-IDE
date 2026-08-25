@@ -1,5 +1,7 @@
 // Pure markdown subset renderer used by the assistant panel.
-// Keep this dependency-free so tests can import it without mounting React/xterm.
+// Only runtime dependency is the i18n table (node-safe, DOM-guarded) so tests
+// can import it without mounting React/xterm.
+import { t } from '@/shared/i18n';
 export function formatMarkdown(text: string): string {
   if (!text) return '';
   // Extract code blocks FIRST from the RAW text — before escaping — so their
@@ -28,8 +30,8 @@ export function formatMarkdown(text: string): string {
         <span class="code-collapse-indicator">▶</span>
         <span class="code-lang">${safeAttr(langLabel)}</span>
         ${filePath ? `<span class="code-file-tag" title="${safeFilePath}">${safeAttr(fileName || filePath)}</span>` : ''}
-        <button class="code-copy-btn" data-action="copy" title="Copy code">Copy</button>
-        <button class="code-apply-btn" data-action="apply" title="${filePath ? `Apply this code to ${safeFilePath}` : 'Apply this code to active file'}">Apply</button>
+        <button class="code-copy-btn" data-action="copy" title="${t('markdownCode.copy')}">${t('markdownCode.copyBtn')}</button>
+        <button class="code-apply-btn" data-action="apply" title="${filePath ? t('markdownCode.applyTo', { file: safeFilePath }) : t('markdownCode.applyToActive')}">${t('markdownCode.apply')}</button>
       </summary>
       <pre class="code-block"><code>${codeContent}</code></pre>
     </details>`;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '@/shared/i18n';
 
 interface Props {
   children: React.ReactNode;
@@ -54,14 +55,14 @@ export default class ErrorBoundary extends React.Component<Props, State> {
             fontSize: 24, marginBottom: 16,
           }}>!</div>
           <h3 style={{ margin: '0 0 8px 0', fontSize: 16, fontWeight: 600 }}>
-            {this.props.name ? `${this.props.name} 组件崩溃` : '组件渲染错误'}
+            {this.props.name ? t('errorBoundary.componentCrashed', { name: this.props.name }) : t('errorBoundary.renderError')}
           </h3>
           <p style={{
             margin: '0 0 16px 0', fontSize: 13,
             color: 'var(--text-muted)', textAlign: 'center',
             maxWidth: 500, lineHeight: 1.5,
           }}>
-            {this.state.error?.message || '发生了未知错误'}
+            {this.state.error?.message || t('errorBoundary.unknownError')}
           </p>
           <button
             onClick={() => {
@@ -78,14 +79,14 @@ export default class ErrorBoundary extends React.Component<Props, State> {
               fontWeight: 500,
             }}
           >
-            重试
+            {t('errorBoundary.retry')}
           </button>
           {this.state.errorInfo && (
             <details style={{
               marginTop: 16, width: '100%', maxWidth: 600,
               fontSize: 11, color: 'var(--text-muted)',
             }}>
-              <summary style={{ cursor: 'pointer', marginBottom: 8 }}>错误详情</summary>
+              <summary style={{ cursor: 'pointer', marginBottom: 8 }}>{t('errorBoundary.errorDetails')}</summary>
               <pre style={{
                 background: 'var(--bg-secondary)',
                 padding: 12, borderRadius: 4,

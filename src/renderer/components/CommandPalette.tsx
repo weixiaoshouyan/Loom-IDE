@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { t } from '@/shared/i18n';
 import { emitLoomEvent } from '../loom-events';
 
 interface Command {
@@ -320,8 +321,8 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
 
   // Group by section for nicer rendering
   const groupedItems = useMemo<{ key: string; label: string; items: PaletteItem[] }[]>(() => {
-    if (isSymbolMode) return [{ key: 'symbols', label: 'Symbols', items: items as PaletteItem[] }];
-    if (!isCommandMode) return [{ key: 'files', label: searchTerm ? 'Files' : 'Recent Files', items: items as PaletteItem[] }];
+    if (isSymbolMode) return [{ key: 'symbols', label: t('commandPalette.symbols'), items: items as PaletteItem[] }];
+    if (!isCommandMode) return [{ key: 'files', label: searchTerm ? t('commandPalette.files') : t('commandPalette.recentFiles'), items: items as PaletteItem[] }];
     // Built-in vs plugin split
     const builtin: PaletteItem[] = [];
     const plugin: PaletteItem[] = [];
@@ -330,8 +331,8 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
       else builtin.push(it as PaletteItem);
     }
     const groups: { key: string; label: string; items: PaletteItem[] }[] = [];
-    if (builtin.length) groups.push({ key: 'builtin', label: 'Built-in', items: builtin });
-    if (plugin.length) groups.push({ key: 'plugin', label: 'Extensions', items: plugin });
+    if (builtin.length) groups.push({ key: 'builtin', label: t('commandPalette.builtin'), items: builtin });
+    if (plugin.length) groups.push({ key: 'plugin', label: t('commandPalette.extensions'), items: plugin });
     return groups;
   }, [isCommandMode, isSymbolMode, items, searchTerm]);
 
@@ -379,16 +380,16 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
 
   if (!visible) return null;
 
-  const placeholder = isCommandMode ? 'Type a command...'
-                    : isSymbolMode ? 'Search symbols... (functions, classes, types)'
-                    : isHelpMode ? 'Show help'
-                    : workspacePath ? 'Search files by name... (> commands, @ symbols)'
-                    : 'Open a folder first';
+  const placeholder = isCommandMode ? t('commandPalette.placeholderCommand')
+                    : isSymbolMode ? t('commandPalette.placeholderSymbols')
+                    : isHelpMode ? t('commandPalette.placeholderHelp')
+                    : workspacePath ? t('commandPalette.placeholderFiles')
+                    : t('commandPalette.placeholderOpenFolder');
 
-  const modeTag = isCommandMode ? { text: 'Commands', cls: 'cmd' }
-                : isSymbolMode ? { text: 'Symbols', cls: 'sym' }
-                : searchTerm ? { text: 'Files', cls: 'file' }
-                : { text: 'Recent', cls: 'rec' };
+  const modeTag = isCommandMode ? { text: t('commandPalette.tagCommands'), cls: 'cmd' }
+                : isSymbolMode ? { text: t('commandPalette.tagSymbols'), cls: 'sym' }
+                : searchTerm ? { text: t('commandPalette.tagFiles'), cls: 'file' }
+                : { text: t('commandPalette.tagRecent'), cls: 'rec' };
 
   return (
     <div className="command-palette-overlay" onClick={onClose}>
@@ -419,7 +420,7 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
           />
           <span className={`command-palette-mode-tag ${modeTag.cls}`}>{modeTag.text}</span>
         </div>
-        <div className="command-palette-list" ref={listRef} role="listbox" aria-activedescendant={flatItems[selectedIdx] ? `cmd-item-${selectedIdx}` : undefined} aria-label="Commands and files">
+        <div className="command-palette-list" ref={listRef} role="listbox" aria-activedescendant={flatItems[selectedIdx] ? `cmd-item-${selectedIdx}` : undefined} aria-label={t('commandPalette.listAria')}>
           {flatItems.length === 0 && (isCommandMode ? (
             <div className="command-palette-empty">No matching commands</div>
           ) : isSymbolMode ? (
