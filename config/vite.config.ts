@@ -44,12 +44,20 @@ export default defineConfig({
     cspPlugin(CSP_BUILD, 'build'),
   ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '../src'),
-      // monaco-editor 的 package.json 无 main 字段（仅 module），istanbul
-      // 覆盖模式解析不到入口；直指 ESM 入口（与 Vite 默认的 module 解析等价）。
-      'monaco-editor': path.resolve(__dirname, '../node_modules/monaco-editor/esm/vs/editor/editor.main.js'),
-    },
+    // Exact-match alias only: subpath imports like
+    // 'monaco-editor/min/vs/editor/editor.main.css' or
+    // 'monaco-editor/esm/vs/language/typescript/ts.worker?worker' must keep
+    // resolving on their own.
+    alias: [
+      {
+        find: /^monaco-editor$/,
+        // monaco-editor's package.json has no main field (module only);
+        // istanbul instrumentation can't resolve its entry, so point straight
+        // at the ESM entry (equivalent to Vite's default resolution).
+        replacement: path.resolve(__dirname, '../node_modules/monaco-editor/esm/vs/editor/editor.main.js'),
+      },
+      { find: '@', replacement: path.resolve(__dirname, '../src') },
+    ],
   },
   root: path.resolve(__dirname, '../src/renderer'),
   publicDir: path.resolve(__dirname, '../public'),
