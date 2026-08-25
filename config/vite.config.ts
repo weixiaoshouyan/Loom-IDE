@@ -1,4 +1,4 @@
-﻿import { defineConfig, type Plugin } from 'vitest/config';
+import { defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -46,6 +46,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '../src'),
+      // monaco-editor 的 package.json 无 main 字段（仅 module），istanbul
+      // 覆盖模式解析不到入口；直指 ESM 入口（与 Vite 默认的 module 解析等价）。
+      'monaco-editor': path.resolve(__dirname, '../node_modules/monaco-editor/esm/vs/editor/editor.main.js'),
     },
   },
   root: path.resolve(__dirname, '../src/renderer'),
@@ -76,29 +79,35 @@ export default defineConfig({
     //   // @vitest-environment jsdom
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    server: {
+      deps: {
+        // istanbul 插桩模式会跳过 optimizeDeps 预构建，需要把 monaco 内联
+        // 打包才能解析其 ESM 入口（否则 coverage 模式报 resolve 错误）。
+        inline: ['monaco-editor'],
+      },
+    },
     coverage: {
-      provider: 'v8',
+      // istanbul 可插桩 TSX（v8 不行），把渲染层组件纳入覆盖率门禁。
+      // 阈值按 2026-08-14 实测校准（含大量未测试组件拉低均值），随里程碑上调。
+      provider: 'istanbul',
       reporter: ['text', 'html', 'lcov'],
       include: ['src/main/**', 'src/agent/**', 'src/shared/**', 'src/renderer/**'],
       exclude: [
         'src/**/*.test.ts',
         'src/**/*.test.tsx',
         'src/renderer/node_modules/**',
-        // v8 provider cannot instrument JSX/HTML — renderer TSX files would
-        // PARSE_ERROR out of coverage and drag every run red. Coverage of
-        // renderer components requires the istanbul provider (future work).
-        'src/**/*.tsx',
-        'src/**/*.html',
+        // 渲染层入口与静态声明不参与覆盖率
+        'src/renderer/main.tsx',
+        'src/renderer/index.html',
+        'src/shared/i18n/**',
       ],
-      // Calibrated to REAL coverage measured on 2026-08-10 (main/agent/shared
-      // .ts only; v8 cannot instrument JSX). The previous 40/30/40/40 values
-      // were never met (actual ~25%) and made the CI gate permanently red.
-      // Ratchet up ~10pp per milestone as tests are added.
       thresholds: {
-        statements: 22,
-        branches: 18,
-        functions: 22,
-        lines: 24,
+        // 2026-08-14 实测（含全部 TSX 组件）：15.36/11.79/13.76/16.71。
+        // 阈值留安全余量防 CI 抖动；每里程碑随组件测试增加而上调。
+        statements: 14,
+        branches: 10,
+        functions: 12,
+        lines: 15,
       },
     },
   },

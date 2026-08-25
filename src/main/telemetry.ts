@@ -29,6 +29,9 @@ export interface AuditEntry {
   details?: Record<string, any>;
 }
 
+/** audit.jsonl 达到该大小后轮转为 audit.jsonl.1（防止磁盘无限增长）。 */
+const MAX_AUDIT_BYTES = 4 * 1024 * 1024;
+
 class TelemetryManager {
   private config: TelemetryConfig = { enabled: false };
   private auditLog: AuditEntry[] = [];
@@ -36,6 +39,9 @@ class TelemetryManager {
   private _auditFile: string | null = null;
   private sentryInitialized = false;
   private auditLoaded = false;
+  private pendingAudit: AuditEntry[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private auditBytes = 0;
 
   /** Lazily resolve the audit file path. `app.getPath` is only safe to call
    *  after Electron's `app` module has been fully initialized, so we avoid
@@ -107,8 +113,38 @@ class TelemetryManager {
     if (this.auditLog.length > this.maxAuditEntries) {
       this.auditLog = this.auditLog.slice(-this.maxAuditEntries);
     }
+    // 异步批量写盘：不在每个 Agent 工具调用链上同步阻塞主进程。
+    this.pendingAudit.push(entry);
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flushAudit(), 500);
+    }
+    // 文件大小防护：超过 4MB 轮转（audit.jsonl → audit-1.jsonl），
+    // 避免日志无限增长（原实现只写不轮转）。
+    if (this.auditBytes > MAX_AUDIT_BYTES) {
+      this.rotateAudit();
+    }
+  }
+
+  private flushAudit() {
+    this.flushTimer = null;
+    if (this.pendingAudit.length === 0) return;
+    const batch = this.pendingAudit;
+    this.pendingAudit = [];
+    const lines = batch.map(e => JSON.stringify(e)).join('\n') + '\n';
     try {
-      fs.appendFileSync(this.auditFile, JSON.stringify(entry) + '\n', 'utf-8');
+      fs.appendFileSync(this.auditFile, lines, 'utf-8');
+      this.auditBytes += Buffer.byteLength(lines);
+    } catch { /* ignore */ }
+  }
+
+  private rotateAudit() {
+    try {
+      if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+      this.flushAudit();
+      const rotated = `${this.auditFile}.1`;
+      if (fs.existsSync(rotated)) fs.unlinkSync(rotated);
+      if (fs.existsSync(this.auditFile)) fs.renameSync(this.auditFile, rotated);
+      this.auditBytes = 0;
     } catch { /* ignore */ }
   }
 

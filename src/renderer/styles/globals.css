@@ -611,6 +611,102 @@ a { color: var(--text-link); }
   height: 100%;
   scrollbar-width: thin;
 }
+
+/* 侧边栏 / AI 面板显隐过渡（VS Code 风格 180ms 滑入） */
+.sidebar {
+  animation: loom-slide-in-left 0.18s ease;
+}
+.ai-agent-panel {
+  animation: loom-slide-in-right 0.18s ease;
+}
+@keyframes loom-slide-in-left {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes loom-slide-in-right {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 骨架屏（加载占位 shimmer） */
+.loom-skeleton {
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: loom-shimmer 1.2s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes loom-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* 断点圆点（glyph margin） */
+.loom-breakpoint::before {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 6px auto;
+  border-radius: 50%;
+  background: var(--red, #e51400);
+}
+
+/* 断点调试控制条（DebugControls） */
+.debug-controls {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel-header);
+}
+.debug-controls-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.debug-controls-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.debug-controls-hint {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.debug-controls-body {
+  display: flex;
+  gap: 8px;
+  padding: 0 8px 8px;
+  max-height: 140px;
+  overflow: auto;
+}
+.debug-controls-column {
+  flex: 1;
+  min-width: 0;
+}
+.debug-controls-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.debug-controls-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.debug-frame, .debug-var {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  padding: 1px 0;
+  align-items: baseline;
+}
+.debug-frame-name { color: var(--accent); font-weight: 600; }
+.debug-frame-loc { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.debug-var-name { color: var(--yellow); flex-shrink: 0; }
+.debug-var-value { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs-container::-webkit-scrollbar { height: 3px; }
 .tab {
   display: flex;
@@ -631,6 +727,13 @@ a { color: var(--text-link); }
   user-select: none;
 }
 .tab:hover { background: var(--bg-tab-hover); }
+/* 预览标签（VS Code 语义）：斜体文件名 + 虚线底边，编辑/双击后消失 */
+.tab.preview .tab-name {
+  font-style: italic;
+}
+.tab.preview:not(.active) {
+  border-bottom: 1px dashed var(--text-muted);
+}
 .tab.active {
   background: var(--bg-tab-active);
   color: var(--text-tab-active);

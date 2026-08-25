@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getLoom } from '../loom-ipc';
+import { t } from '@/shared/i18n';
+import { emitLoomEvent } from '../loom-events';
 
 interface Props {
   filePath: string;
@@ -19,20 +21,42 @@ const fileColors: Record<string, string> = {
   py: '#3572A5', md: '#519aba', go: '#00ADD8', rs: '#dea584',
 };
 
+/**
+ * 将绝对路径切成面包屑段。Windows 盘符（如 `C:\`）作为第一段整体保留，
+ * 避免点击盘符段时拼出非法路径 `C:`（readDir 会失败）。
+ */
+function splitPathSegments(filePath: string): { segments: string[]; sep: string } {
+  const sep = /\\/.test(filePath) ? '\\' : '/';
+  const parts = filePath.split(/[\\/]/).filter(Boolean);
+  if (/^[A-Za-z]:$/.test(parts[0] || '')) {
+    // `C:` → `C:\`，保证 dirPath 合法
+    parts[0] = parts[0] + sep;
+  }
+  return { segments: parts, sep };
+}
+
 export default function Breadcrumb({ filePath, onOpenFile, locale = 'zh-CN' }: Props) {
   const [dropdown, setDropdown] = useState<{ idx: number; x: number; y: number; entries: DirEntry[] } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [segments, setSegments] = useState<string[]>([]);
 
-  if (!filePath) return null;
-  const segments = filePath.split(/[\\/]/).filter(Boolean);
-
+  // 所有 Hook 必须在条件返回之前调用（Rules of Hooks）
   const closeDropdown = useCallback(() => setDropdown(null), []);
+
+  useEffect(() => {
+    if (!filePath) {
+      setSegments([]);
+      setDropdown(null);
+      return;
+    }
+    setSegments(splitPathSegments(filePath).segments);
+  }, [filePath]);
 
   useEffect(() => {
     if (!dropdown) return;
     const handler = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (!t.closest('.context-menu')) closeDropdown();
+      const target = e.target as HTMLElement;
+      if (!target.closest('.context-menu')) closeDropdown();
     };
     setTimeout(() => document.addEventListener('mousedown', handler), 0);
     return () => document.removeEventListener('mousedown', handler);
@@ -40,7 +64,7 @@ export default function Breadcrumb({ filePath, onOpenFile, locale = 'zh-CN' }: P
 
   const onSegmentClick = useCallback(async (e: React.MouseEvent, idx: number) => {
     e.stopPropagation();
-    const sep = navigator.platform.toLowerCase().includes('win') || filePath.includes('\\') ? '\\' : '/';
+    const sep = /\\/.test(filePath) ? '\\' : '/';
     const dirPath = segments.slice(0, idx + 1).join(sep);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setLoading(true);
@@ -67,15 +91,17 @@ export default function Breadcrumb({ filePath, onOpenFile, locale = 'zh-CN' }: P
         const content = await getLoom()?.fs?.readFile?.(entry.path);
         if (typeof content !== 'string') return;
         if (content.startsWith('__ERR__:')) {
-          window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `无法打开文件: ${content.slice('__ERR__:'.length)}`, type: 'error' } }));
+          emitLoomEvent('loom:notify', { message: `${t('fileTree.cannotOpenFile')}: ${content.slice('__ERR__:'.length)}`, type: 'error' });
           return;
         }
         onOpenFile(entry.path, content);
       } catch (e: any) {
-        window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `无法打开文件: ${e.message}`, type: 'error' } }));
+        emitLoomEvent('loom:notify', { message: `${t('fileTree.cannotOpenFile')}: ${e.message}`, type: 'error' });
       }
     }
   }, [onOpenFile]);
+
+  if (!filePath || segments.length === 0) return null;
 
   return (
     <>

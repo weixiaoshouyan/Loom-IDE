@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '@/shared/i18n';
 
 interface Props {
   activeView: string;
@@ -22,12 +23,12 @@ const Icons = {
 
 export default function ActivityBar({ activeView, onViewChange, aiOpen, onToggleAI, onSettings, badges = {} }: Props) {
   const topItems = [
-    { id: 'explorer', icon: Icons.explorer, title: 'Explorer (Ctrl+Shift+E)' },
-    { id: 'search', icon: Icons.search, title: 'Search (Ctrl+Shift+F)' },
-    { id: 'git', icon: Icons.git, title: 'Source Control (Ctrl+Shift+G)' },
-    { id: 'outline', icon: Icons.outline, title: 'Outline' },
-    { id: 'notepads', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>, title: 'Notepads' },
-    { id: 'extensions', icon: Icons.extensions, title: 'Extensions' },
+    { id: 'explorer', icon: Icons.explorer, title: t('activity.explorer') },
+    { id: 'search', icon: Icons.search, title: t('activity.search') },
+    { id: 'git', icon: Icons.git, title: t('activity.sourceControl') },
+    { id: 'outline', icon: Icons.outline, title: t('activity.outline') },
+    { id: 'notepads', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>, title: t('activity.notepads') },
+    { id: 'extensions', icon: Icons.extensions, title: t('activity.extensions') },
   ];
 
   return (
@@ -71,10 +72,10 @@ export default function ActivityBar({ activeView, onViewChange, aiOpen, onToggle
       <div className="activitybar-bottom">
         <div
           className={`activitybar-item ${aiOpen ? 'active' : ''}`}
-          title="AI Agent"
+          title={t('activity.aiAgent')}
           role="button"
           tabIndex={0}
-          aria-label="AI Agent"
+          aria-label={t('activity.aiAgent')}
           data-testid="activity-ai"
           onClick={onToggleAI}
           onKeyDown={event => {
@@ -85,10 +86,10 @@ export default function ActivityBar({ activeView, onViewChange, aiOpen, onToggle
         </div>
         <div
           className="activitybar-item"
-          title="Settings (Ctrl+,)"
+          title={t('activity.settings')}
           role="button"
           tabIndex={0}
-          aria-label="Settings"
+          aria-label={t('activity.settings')}
           data-testid="activity-settings"
           onClick={onSettings}
           onKeyDown={event => {

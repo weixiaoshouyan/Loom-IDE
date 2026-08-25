@@ -14,6 +14,8 @@ import path from 'path';
 import { app } from 'electron';
 import { AIEngine, ChatMessage } from '../agent/ai-engine';
 import { buildAgentCallbacks, setAgentCallbackSingletons, getSkillManager, getMcpClient, getCloudSync } from './agent-callbacks';
+import { loadWorkspaceRulesPrompt } from './workspace-rules';
+import { CheckpointManager } from '../agent/checkpoint';
 import { DevelopmentCommandQueue } from '../agent/development-command';
 import { canAccess } from './path-permissions';
 
@@ -196,7 +198,7 @@ export function registerAIHandlers() {
           previewFileWrites: options?.previewFileWrites !== false,
           autoApplySafeEdits: options?.autoApplySafeEdits === true,
           abortSignal: controller.signal,
-          teamRules: getCloudSync()?.formatRulesPrompt(getCloudSync()?.loadTeamRules(workspacePath)) || '',
+          teamRules: loadWorkspaceRulesPrompt(workspacePath) || getCloudSync()?.formatRulesPrompt(getCloudSync()?.loadTeamRules(workspacePath)) || '',
           skills: getSkillManager()?.getAll().map((s: any) => ({ id: s.id, name: s.name, description: s.description })) || [],
           mcpServers: getMcpClient()?.getAllServers().map((s: any) => ({
             id: s.id,
@@ -228,6 +230,13 @@ export function registerAIHandlers() {
               };
               if (controller.signal.aborted) onAbort();
               else controller.signal.addEventListener('abort', onAbort, { once: true });
+              // 死锁防护：5 分钟未审批按拒绝处理（避免后台任务永久悬挂）
+              setTimeout(() => {
+                if (pendingDestructiveApprovals.has(id)) {
+                  pendingDestructiveApprovals.delete(id);
+                  reject(new Error('Destructive action approval timed out (5 min) — treated as rejected.'));
+                }
+              }, 5 * 60 * 1000);
             }),
           // 主 agent 轮次上限 30：大任务（多文件重构/修测试）15 轮经常不够。
         // 成本由 token 预算（默认 80k）先行约束，轮次多不会失控。
@@ -235,6 +244,7 @@ export function registerAIHandlers() {
           plannerMode: options?.plannerMode === true,
           planOnly: options?.planOnly === true,
           verifyMode: options?.verifyMode === true,
+          checkpointId: typeof options?.checkpointId === 'string' ? options.checkpointId : undefined,
           planApproval: options?.plannerMode === true
             ? (planText: string) => new Promise<boolean>((resolve, reject) => {
                 pendingPlanApprovals.set(id, resolve);
@@ -245,6 +255,14 @@ export function registerAIHandlers() {
                 };
                 if (controller.signal.aborted) onAbort();
                 else controller.signal.addEventListener('abort', onAbort, { once: true });
+                // 死锁防护：用户既不点确认也不停止时，5 分钟后按「拒绝」处理并
+                // 落 checkpoint（agent 会收到拒绝信号，不会永久卡在 waiting_for_plan_approval）。
+                setTimeout(() => {
+                  if (pendingPlanApprovals.has(id)) {
+                    pendingPlanApprovals.delete(id);
+                    reject(new Error('Plan approval timed out (5 min) — treated as rejected.'));
+                  }
+                }, 5 * 60 * 1000);
               })
             : undefined,
         });
@@ -331,7 +349,7 @@ export function registerAIHandlers() {
           diagnostics: [],
           previewFileWrites: true,
           abortSignal: controller.signal,
-          teamRules: getCloudSync()?.formatRulesPrompt(getCloudSync()?.loadTeamRules(workspacePath)) || '',
+          teamRules: loadWorkspaceRulesPrompt(workspacePath) || getCloudSync()?.formatRulesPrompt(getCloudSync()?.loadTeamRules(workspacePath)) || '',
           skills: getSkillManager()?.getAll().map((s: any) => ({ id: s.id, name: s.name, description: s.description })) || [],
           mcpServers: getMcpClient()?.getAllServers().map((s: any) => ({
             id: s.id,
@@ -357,6 +375,55 @@ export function registerAIHandlers() {
         activeStreams.delete(id);
       }
     })();
+  });
+
+  // ---- Checkpoints (Agent resume) -------------------------------------------
+  // List saved agent checkpoints for a workspace (newest first).
+  ipcMain.handle('ai:checkpoint-list', async (_e: any, workspacePath: string) => {
+    if (!workspacePath || !canAccess(workspacePath)) return { ok: false, error: 'workspace not granted' };
+    try {
+      const mgr = new CheckpointManager(workspacePath);
+      const items = mgr.list().map(c => ({
+        id: c.id,
+        createdAt: c.createdAt,
+        workspacePath: c.workspacePath,
+        messageCount: Array.isArray(c.messages) ? c.messages.length : 0,
+        preview: Array.isArray(c.messages)
+          ? (c.messages.find(m => m.role === 'user')?.content || '').slice(0, 120)
+          : '',
+      }));
+      return { ok: true, checkpoints: items };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'failed to list checkpoints' };
+    }
+  });
+
+  // Load a checkpoint's conversation so the UI can render it before resuming.
+  ipcMain.handle('ai:checkpoint-load', async (_e: any, workspacePath: string, checkpointId: string) => {
+    if (!workspacePath || !canAccess(workspacePath) || typeof checkpointId !== 'string') {
+      return { ok: false, error: 'invalid arguments' };
+    }
+    try {
+      const mgr = new CheckpointManager(workspacePath);
+      const ckpt = mgr.load(checkpointId);
+      if (!ckpt) return { ok: false, error: 'checkpoint not found' };
+      return { ok: true, checkpoint: ckpt };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'failed to load checkpoint' };
+    }
+  });
+
+  // Delete a checkpoint (user cleanup).
+  ipcMain.handle('ai:checkpoint-delete', async (_e: any, workspacePath: string, checkpointId: string) => {
+    if (!workspacePath || !canAccess(workspacePath) || typeof checkpointId !== 'string') {
+      return { ok: false };
+    }
+    try {
+      const mgr = new CheckpointManager(workspacePath);
+      return { ok: mgr.delete(checkpointId) };
+    } catch {
+      return { ok: false };
+    }
   });
 }
 

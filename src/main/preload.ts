@@ -23,6 +23,7 @@ const loom: Loom = {
     build: (workspacePath) => ipcRenderer.invoke('code-index:build', workspacePath),
     search: (workspacePath, query, topK) => ipcRenderer.invoke('code-index:search', workspacePath, query, topK),
     prebuild: (workspacePath) => ipcRenderer.invoke('codeindex:prebuild', workspacePath),
+    fileSymbols: (workspacePath, filePath) => ipcRenderer.invoke('code-index:file-symbols', workspacePath, filePath),
   },
   ai: {
     chat: (messages, context) => ipcRenderer.invoke('ai:chat', messages, context),
@@ -99,6 +100,9 @@ const loom: Loom = {
     approveDestructive: (sid) => ipcRenderer.invoke('ai:agent-destructive-approve', sid),
     rejectDestructive: (sid) => ipcRenderer.invoke('ai:agent-destructive-reject', sid),
     rejectAgentEdit: (sid, filePath) => ipcRenderer.invoke('ai:agent-reject-edit', sid, filePath),
+    checkpointList: (workspacePath) => ipcRenderer.invoke('ai:checkpoint-list', workspacePath),
+    checkpointLoad: (workspacePath, checkpointId) => ipcRenderer.invoke('ai:checkpoint-load', workspacePath, checkpointId),
+    checkpointDelete: (workspacePath, checkpointId) => ipcRenderer.invoke('ai:checkpoint-delete', workspacePath, checkpointId),
     agentChatStream: (messages, workspacePath, openFiles, onChunk, onEnd, onError,
       onFilePreview, onFileCreated, onFileChanged, onPlanAwait, onDestructiveAwait, options) => {
       const id = crypto.randomUUID();
@@ -304,11 +308,42 @@ const loom: Loom = {
       return () => ipcRenderer.removeListener('window:maximized', listener);
     },
   },
+  update: {
+    check: () => ipcRenderer.invoke('update:check'),
+    onAvailable: (cb) => {
+      const listener = (_e: IpcRendererEvent, info: { version: string; releaseDate?: string }) => cb(info);
+      ipcRenderer.on('update:available', listener);
+      return () => ipcRenderer.removeListener('update:available', listener);
+    },
+    onNotAvailable: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on('update:not-available', listener);
+      return () => ipcRenderer.removeListener('update:not-available', listener);
+    },
+    onError: (cb) => {
+      const listener = (_e: IpcRendererEvent, message: string) => cb(message);
+      ipcRenderer.on('update:error', listener);
+      return () => ipcRenderer.removeListener('update:error', listener);
+    },
+  },
+  app: {
+    onOpenFolderRequest: (cb) => {
+      const listener = (_e: IpcRendererEvent, folder: string) => cb(folder);
+      ipcRenderer.on('app:open-folder', listener);
+      return () => ipcRenderer.removeListener('app:open-folder', listener);
+    },
+  },
+  session: {
+    save: (data) => ipcRenderer.invoke('session:save', data),
+    load: () => ipcRenderer.invoke('session:load'),
+  },
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   },
   verification: {
-    runCommand: (workspacePath, commandLine) => ipcRenderer.invoke('verification:run-command', workspacePath, commandLine),
+    // NOTE: the synchronous `verification:run-command` bridge was removed —
+    // it drove a `spawnSync` in the main process (UI freeze up to 120s) and no
+    // renderer code used it. Use the streaming `runStream` below.
     runStream: (workspacePath, commandLine, onOutput, onExit) => {
       const id = crypto.randomUUID();
       const listener = (_e: IpcRendererEvent, rid: string, type: string, payload: unknown) => {
@@ -344,6 +379,25 @@ const loom: Loom = {
       const listener = (_e: IpcRendererEvent, code: number | null) => cb(code);
       ipcRenderer.on('debug:exit', listener);
       return () => ipcRenderer.removeListener('debug:exit', listener);
+    },
+    // 断点调试控制（CDP / Node inspector）
+    continue: () => ipcRenderer.invoke('debug:continue'),
+    pause: () => ipcRenderer.invoke('debug:pause'),
+    step: (kind) => ipcRenderer.invoke('debug:step', kind),
+    setBreakpoint: (fileUrl, line) => ipcRenderer.invoke('debug:set-breakpoint', fileUrl, line),
+    isConnected: () => ipcRenderer.invoke('debug:is-connected'),
+    onPaused: (cb) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        payload: { reason: string; stack: { functionName: string; url: string; line: number; callFrameId: string }[]; variables: { name: string; value?: string }[] },
+      ) => cb(payload);
+      ipcRenderer.on('debug:paused', listener);
+      return () => ipcRenderer.removeListener('debug:paused', listener);
+    },
+    onResumed: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on('debug:resumed', listener);
+      return () => ipcRenderer.removeListener('debug:resumed', listener);
     },
   },
   watcher: {

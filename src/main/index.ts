@@ -15,7 +15,7 @@ import { trace, clearTrace } from './startup-trace';
 clearTrace();
 trace('module-load-start');
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, shell, screen, dialog, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import fs from 'fs';
@@ -29,6 +29,7 @@ import { buildCodeIndex, loadCodeIndex, saveCodeIndex, searchCodeIndex } from '.
 import { CloudSyncManager } from './cloud-sync';
 import { telemetry } from './telemetry';
 import { DevelopmentCommandQueue } from '../agent/development-command';
+import { extractPathFromArgv, extractPathFromLoomUrl } from './cli-path';
 
 // ---- Handler modules (each registers its own IPC via setXxxSingletons) -------
 import { getUserData, getDataDir, getConfigPath, ensureDataDir, loadConfig, saveConfig } from './config';
@@ -38,6 +39,7 @@ import { registerFileHandlers } from './file-handlers';
 import { setMainWindowForWatcher, registerFileWatcherHandlers, stopFileWatcher } from './file-watcher';
 import { registerHistoryHandlers, stopHistoryCleanupTimer } from './history-handlers';
 import { registerDebugRuntimeHandlers } from './debug-runtime-handlers';
+import { registerSessionHandlers } from './session-handlers';
 import { setTerminalRuntimeGetter, setStreamRuntimeGetter, setPermissionRuntimeGetter, setPluginRuntimeGetter } from './runtime-state';
 import { registerConversationHandlers } from './conversations-handlers';
 import { registerSettingsHandlers, registerCodeIndexHandlers } from './settings-handlers';
@@ -148,6 +150,7 @@ function createWindow() {
   const cfg = loadConfig();
   const theme = cfg.theme || 'dark';
   const ws = cfg.windowState;
+  const isDev = process.env.NODE_ENV === 'development';
 
   // Restore window position clamped to a visible display: after an external
   // monitor is unplugged, saved x/y can land the window off-screen.
@@ -207,8 +210,35 @@ function createWindow() {
 
   if (ws?.maximized) mainWindow.maximize();
 
-  const isDev = process.env.NODE_ENV === 'development';
   const loadUrl = isDev ? 'http://localhost:5174' : `http://localhost:${staticServerPort}`;
+
+  // 渲染进程崩溃/无响应恢复（成熟 IDE 标配）：崩溃后自动重载页面，
+  // 卡死时提示用户选择「等待」或「重新加载」。
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Loom] renderer process gone:', details.reason);
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.reload();
+      }
+    } catch { /* window destroyed */ }
+  });
+  mainWindow.webContents.on('unresponsive', () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['等待', '重新加载'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Loom IDE 无响应',
+        message: '界面无响应。可以等待恢复，或重新加载页面（未保存的内容会保留在编辑器中）。',
+      }).then(({ response }) => {
+        if (response === 1 && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.reload();
+        }
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  });
 
   mainWindow.loadURL(loadUrl).catch((err) => {
     console.error('Failed to load URL, retrying with file fallback:', err);
@@ -314,12 +344,50 @@ function wireWindow(win: BrowserWindow) {
 // =============================================================================
 let tray: Tray | null = null;
 
+// ---- 单实例锁 + CLI 参数 + loom:// 协议（成熟 IDE 标配）----
+// 第二次启动不再新开实例：把参数转给已有实例并退出。
+const gotLock = app.requestSingleInstanceLock();
+
+/** 把「打开文件夹」请求发给主窗口渲染进程（窗口未就绪时排队到 did-finish-load）。 */
+function requestOpenFolder(folder: string) {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', () => {
+      try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:open-folder', folder); } catch {}
+    });
+  } else {
+    win.webContents.send('app:open-folder', folder);
+  }
+}
+
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+    const folder = extractPathFromArgv(argv);
+    if (folder) requestOpenFolder(folder);
+  });
+  // loom:// 协议：浏览器/终端 `loom://open?path=...` 打开工作区
+  app.setAsDefaultProtocolClient('loom');
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const folder = extractPathFromLoomUrl(url);
+    if (folder) requestOpenFolder(folder);
+  });
+}
+
 app.on('ready', () => trace('app-ready-event'));
 app.on('will-quit', () => trace('will-quit'));
 app.on('quit', () => trace('quit'));
 
 app.whenReady().then(async () => {
   trace('whenReady-resolved');
+  if (!gotLock) return; // 非首实例：app.quit() 已调用
   try {
     ensureDataDir();
     // Load the user-configurable command policy (falls back to defaults when app isn't ready).
@@ -383,6 +451,7 @@ app.whenReady().then(async () => {
     registerPluginHandlers();
     registerMarketplaceIPC();
     registerDebugRuntimeHandlers();
+    registerSessionHandlers();
     trace('after-ipc-register');
 
     // ---- Wire runtime-state snapshot getters ----
@@ -407,6 +476,12 @@ app.whenReady().then(async () => {
     createWindow();
     trace('after-createWindow');
 
+    // CLI：`loom <folder>` 打开工作区（首实例启动参数）
+    const cliFolder = extractPathFromArgv(process.argv);
+    if (cliFolder) {
+      requestOpenFolder(cliFolder);
+    }
+
     // ---- Auto updater ----
     try {
       autoUpdater.on('update-available', (info) => {
@@ -416,17 +491,34 @@ app.whenReady().then(async () => {
           releaseDate: info.releaseDate,
         });
       });
+      autoUpdater.on('update-not-available', () => {
+        mainWindow?.webContents.send('update:not-available');
+      });
       autoUpdater.on('error', (err) => {
         console.warn('[AutoUpdater] Error:', err);
+        mainWindow?.webContents.send('update:error', String(err?.message || err));
       });
       // The publish URL in package.json is a placeholder until a real update
       // server exists — checking it every launch would always fail.
       const updateUrl = (require('../package.json')?.build?.publish?.[0]?.url as string) || '';
-      if (updateUrl.includes('updates.loom-ide.example') || updateUrl.includes('localhost')) {
+      const updateUrlIsPlaceholder = updateUrl.includes('updates.loom-ide.example') || updateUrl.includes('localhost');
+      if (updateUrlIsPlaceholder) {
         console.warn('[AutoUpdater] publish url is a placeholder — skipping update check.');
       } else {
         autoUpdater.checkForUpdates();
       }
+      // 手动「检查更新」（Help 菜单）：占位 URL 时返回未配置，避免静默无响应。
+      ipcMain.handle('update:check', async () => {
+        if (updateUrlIsPlaceholder) {
+          return { ok: false, reason: 'not-configured' };
+        }
+        try {
+          const result = await autoUpdater.checkForUpdates();
+          return { ok: true, current: autoUpdater.currentVersion?.version || '', hasUpdate: !!result?.updateInfo };
+        } catch (e: any) {
+          return { ok: false, reason: 'error', message: e?.message || 'update check failed' };
+        }
+      });
     } catch (e) {
       console.warn('Auto updater init failed (non-critical):', e);
     }

@@ -41,7 +41,9 @@ export function formatMarkdown(text: string): string {
   html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   // Restore the rendered code blocks.
-  html = html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (_: string, i: string) => codeBlocks[Number(i)]);
+  // NUL 占位符不能写进正则字面量（no-control-regex），动态构造。
+  const CODEBLOCK_RE = new RegExp(`\\x00CODEBLOCK(\\d+)\\x00`, 'g');
+  html = html.replace(CODEBLOCK_RE, (_: string, i: string) => codeBlocks[Number(i)]);
 
   html = html.replace(/`([^\n`]+)`/g, '<code class="inline-code">$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');

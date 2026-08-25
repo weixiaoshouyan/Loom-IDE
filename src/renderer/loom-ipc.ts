@@ -84,6 +84,8 @@ export interface LoomCodeIndex {
     symbols?: number;
     reason?: 'no-workspace' | 'not-allowed';
   }>;
+  /** 单文件符号（Outline 视图；未索引语言由渲染层降级为正则）。 */
+  fileSymbols: (workspacePath: string, filePath: string) => Promise<{ name: string; kind: string; line: number; endLine: number }[]>;
 }
 
 export interface LoomAIChatStreamHandlers {
@@ -117,6 +119,8 @@ export interface LoomAgentChatOptions {
   verifyMode?: boolean;
   /** Currently activated skill id — its prompt is injected into the agent system prompt. */
   activeSkillId?: string;
+  /** Resume from a saved agent checkpoint (断点续跑). */
+  checkpointId?: string;
 }
 
 export interface LoomAI {
@@ -173,6 +177,16 @@ export interface LoomAI {
    * reverted manually.
    */
   rejectAgentEdit: (sid: string, filePath: string) => Promise<{ rejected: boolean; applied: boolean; reason?: string }>;
+  /** List saved agent checkpoints for a workspace (newest first). */
+  checkpointList: (workspacePath: string) => Promise<{
+    ok: boolean;
+    checkpoints?: { id: string; createdAt: number; workspacePath: string; messageCount: number; preview: string }[];
+    error?: string;
+  }>;
+  /** Load a checkpoint's conversation so the UI can render it before resuming. */
+  checkpointLoad: (workspacePath: string, checkpointId: string) => Promise<{ ok: boolean; checkpoint?: unknown; error?: string }>;
+  /** Delete a checkpoint. */
+  checkpointDelete: (workspacePath: string, checkpointId: string) => Promise<{ ok: boolean }>;
   agentChatStream: (
     messages: unknown[],
     workspacePath: string,
@@ -489,14 +503,12 @@ export interface LoomRunExitPayload {
 }
 
 export interface LoomVerification {
-  runCommand: (
-    workspacePath: string,
-    commandLine: string,
-  ) => Promise<{ command: string } & DevelopmentCommandResult>;
   /**
    * Streaming run ("Run Without Debugging"). stdout/stderr chunks are delivered
    * via `onOutput`; the final result arrives once on `onExit`. The returned
    * function aborts the running command and unsubscribes.
+   * (The old synchronous `runCommand` bridge was removed — it blocked the main
+   * process with spawnSync and was unused by the renderer.)
    */
   runStream: (
     workspacePath: string,
@@ -507,11 +519,19 @@ export interface LoomVerification {
 }
 
 export interface LoomDebug {
-  start: (scriptPath: string, cwd: string) => Promise<{ ok: boolean; message: string }>;
+  start: (scriptPath: string, cwd: string) => Promise<{ ok: boolean; message: string; cdp?: boolean; connected?: boolean }>;
   stop: () => Promise<{ ok: boolean; message?: string }>;
   onStdout: (cb: (data: string) => void) => () => void;
   onStderr: (cb: (data: string) => void) => () => void;
   onExit: (cb: (code: number | null) => void) => () => void;
+  // 断点调试控制（CDP / Node inspector）
+  continue: () => Promise<{ ok: boolean; message?: string }>;
+  pause: () => Promise<{ ok: boolean; message?: string }>;
+  step: (kind: 'over' | 'into' | 'out') => Promise<{ ok: boolean; message?: string }>;
+  setBreakpoint: (fileUrl: string, line: number) => Promise<{ ok: boolean; breakpointId?: string; message?: string }>;
+  isConnected: () => Promise<{ ok: boolean; connected?: boolean }>;
+  onPaused: (cb: (payload: { reason: string; stack: { functionName: string; url: string; line: number; callFrameId: string }[]; variables: { name: string; value?: string }[] }) => void) => () => void;
+  onResumed: (cb: () => void) => () => void;
 }
 
 export interface LoomWatcher {
@@ -537,6 +557,24 @@ export interface LoomDebugRuntime {
   getState: () => Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
 }
 
+export interface LoomUpdate {
+  check: () => Promise<{ ok: boolean; reason?: string; current?: string; hasUpdate?: boolean; message?: string }>;
+  onAvailable: (cb: (info: { version: string; releaseDate?: string }) => void) => () => void;
+  onNotAvailable: (cb: () => void) => () => void;
+  onError: (cb: (message: string) => void) => () => void;
+}
+
+/** 主进程应用级事件（CLI / loom:// 协议 / 单实例二次启动）。 */
+export interface LoomApp {
+  onOpenFolderRequest: (cb: (folder: string) => void) => () => void;
+}
+
+/** 磁盘会话存储（替代 localStorage 的大文件持久化）。 */
+export interface LoomSession {
+  save: (data: unknown) => Promise<{ ok: boolean }>;
+  load: () => Promise<{ ok: boolean; data: unknown | null }>;
+}
+
 export interface Loom {
   reportError: (payload: LoomErrorPayload) => void;
   codeIndex: LoomCodeIndex;
@@ -557,6 +595,9 @@ export interface Loom {
   git: LoomGit;
   terminal: LoomTerminal;
   window: LoomWindow;
+  update: LoomUpdate;
+  app: LoomApp;
+  session: LoomSession;
   shell: LoomShell;
   verification: LoomVerification;
   debug: LoomDebug;

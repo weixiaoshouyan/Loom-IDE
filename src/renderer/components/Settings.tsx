@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { t, setLocale, getLocale } from '@/shared/i18n';
+import { emitLoomEvent } from '../loom-events';
+import {
+  findKeybindingConflicts,
+  resolveKeybindings,
+  eventToChord,
+  type KeybindingId,
+  type KeybindingOverrides,
+} from '../keybindings';
 
 interface AIProvider {
   id: string; name: string; baseUrl: string; apiKey: string;
@@ -63,9 +71,20 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
   const [editProfile, setEditProfile] = useState<string | null>(null);
   const [newModelInput, setNewModelInput] = useState("");
   const [currentLocale, setCurrentLocale] = useState(locale);
+  // 键位绑定（可交互录制）
+  const [kbOverrides, setKbOverrides] = useState<KeybindingOverrides>({});
+  const [kbRecording, setKbRecording] = useState<KeybindingId | null>(null);
+  const [kbLoaded, setKbLoaded] = useState(false);
 
   useEffect(() => {
     window.loom.settings.getAll().then((s: any) => setSettings(s)).catch(() => {});
+    // 加载键位覆盖（有 settings 后）
+    window.loom.settings.getAll().then((s: any) => {
+      if (s?.keybindings && typeof s.keybindings === 'object') {
+        setKbOverrides(s.keybindings);
+      }
+      setKbLoaded(true);
+    }).catch(() => setKbLoaded(true));
     window.loom.ai.getConfig().then((c: AIConfig) => setAiConfig(c)).catch(() => {});
     window.loom.plugins.getAll().then((p: any[]) => setPlugins(p)).catch(() => {});
   }, []);
@@ -89,7 +108,7 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.style.colorScheme = prefersDark ? 'dark' : 'light';
       }
-      window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'theme', value: theme } }));
+      emitLoomEvent('loom:setting-change', { key: 'theme', value: theme });
       return { ...s, theme };
     });
   }, []);
@@ -98,7 +117,7 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
     setCurrentLocale(newLocale);
     setLocale(newLocale);
     window.loom.settings.set('locale', newLocale);
-    window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'locale', value: newLocale } }));
+    emitLoomEvent('loom:setting-change', { key: 'locale', value: newLocale });
   }, []);
 
   const saveAll = async () => {
@@ -454,26 +473,96 @@ export default function Settings({ onClose, locale = 'zh-CN' }: Props) {
     </div>
   );
 
-  const renderKeybindings = () => (
-    <div className="settings-section">
-      <table className="settings-keybindings-table">
-        <thead><tr><th>{tk('command')}</th><th>{tk('shortcut')}</th></tr></thead>
-        <tbody>
-          {[["Save","Ctrl+S"],["Save All","Ctrl+Shift+S"],["Open File","Ctrl+O"],["Open Folder","Ctrl+K"],["New File","Ctrl+N"],["Find","Ctrl+F"],["Find & Replace","Ctrl+H"],["Command Palette","Ctrl+Shift+P"],["Toggle Sidebar","Ctrl+B"],["Toggle Terminal","Ctrl+`"],["Toggle Word Wrap","Alt+Z"],["Close Tab","Ctrl+W"],["Settings","Ctrl+,"],["Go to Definition","F12"],["Find References","Shift+F12"],["Rename Symbol","F2"],["Format Document","Shift+Alt+F"],["Toggle Comment","Ctrl+/"],["Start Debug","F5"],["Stop Debug","Shift+F5"],["Step Over","F10"],["Step Into","F11"]].map(([cmd, key]) => (
-            <tr key={cmd}><td>{cmd}</td><td><kbd>{key}</kbd></td></tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  const renderKeybindings = () => {
+    const resolved = resolveKeybindings(kbOverrides);
+    const conflicts = findKeybindingConflicts(resolved);
+
+    const saveOverrides = (next: KeybindingOverrides) => {
+      setKbOverrides(next);
+      window.loom.settings.set('keybindings', next).catch(() => {});
+      window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'keybindings', value: next } }));
+    };
+
+    const onRecordKey = (e: React.KeyboardEvent, id: KeybindingId) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { setKbRecording(null); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        saveOverrides({ ...kbOverrides, [id]: null });
+        setKbRecording(null);
+        return;
+      }
+      const chord = eventToChord(e.nativeEvent);
+      if (!chord || chord === 'Control' || chord === 'Shift' || chord === 'Alt') return;
+      saveOverrides({ ...kbOverrides, [id]: chord });
+      setKbRecording(null);
+    };
+
+    return (
+      <div className="settings-section">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {locale === 'zh-CN' ? '点击键位可重新绑定；Backspace 清除绑定；Escape 取消。' : 'Click a key to rebind; Backspace clears; Escape cancels.'}
+          </span>
+          <button
+            className="settings-btn-sm"
+            onClick={() => { setKbOverrides({}); window.loom.settings.set('keybindings', {}).catch(() => {}); window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'keybindings', value: {} } })); }}
+          >
+            {locale === 'zh-CN' ? '重置默认' : 'Reset Defaults'}
+          </button>
+        </div>
+        {conflicts.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>
+            ⚠ {locale === 'zh-CN' ? '键位冲突：' : 'Conflicts: '}
+            {conflicts.map(c => `${c.chord} (${c.commands.join(', ')})`).join('；')}
+          </div>
+        )}
+        <table className="settings-keybindings-table">
+          <thead><tr><th>{tk('command')}</th><th>{tk('shortcut')}</th></tr></thead>
+          <tbody>
+            {resolved.map(kb => {
+              const inConflict = kb.chord ? conflicts.some(c => c.chord === kb.chord) : false;
+              return (
+                <tr key={kb.id} style={{ color: inConflict ? 'var(--red)' : undefined }}>
+                  <td>{kb.label}</td>
+                  <td>
+                    {kbRecording === kb.id ? (
+                      <input
+                        className="search-input"
+                        style={{ width: 140, height: 22, fontSize: 12 }}
+                        autoFocus
+                        placeholder={locale === 'zh-CN' ? '按下新键位...' : 'Press new key...'}
+                        onKeyDown={(e) => onRecordKey(e, kb.id)}
+                        onBlur={() => setKbRecording(null)}
+                      />
+                    ) : (
+                      <button
+                        className="settings-btn-sm"
+                        style={{ minWidth: 100 }}
+                        onClick={() => setKbRecording(kb.id)}
+                        title={locale === 'zh-CN' ? '点击重新绑定' : 'Click to rebind'}
+                      >
+                        {kb.chord ? <kbd>{kb.chord}</kbd> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                        {kb.isOverride && <span style={{ color: 'var(--accent)', marginLeft: 4 }}>●</span>}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
         <div className="settings-sidebar">
           <div className="settings-sidebar-header">
-            <span style={{ fontWeight: 600, fontSize: 13 }}>Settings</span>
-            <button className="settings-close-btn" onClick={onClose} aria-label="Close settings">
+            <span style={{ fontWeight: 600, fontSize: 13 }}>{tk('settingsTitle')}</span>
+            <button className="settings-close-btn" onClick={onClose} aria-label={tk('closeSettings')}>
               <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5"/></svg>
             </button>
           </div>

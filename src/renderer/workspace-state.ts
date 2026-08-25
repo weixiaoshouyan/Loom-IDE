@@ -27,7 +27,7 @@ export function isFileDirty(content: string, originalContent: string): boolean {
 
 export function upsertOpenFile(
   openFiles: OpenFile[],
-  _activeIdx: number,
+  activeIdx: number,
   filePath: string,
   content: string,
   language: string,
@@ -48,15 +48,42 @@ export function upsertOpenFile(
     return { openFiles: next, activeIdx: existing, selectedFile: filePath };
   }
 
+  // 预览标签（VS Code 语义）：单击文件树/命令面板打开的文件默认是预览，
+  // 若当前活动标签是未修改的预览标签，则替换它而不是无限堆积标签。
+  // 双击钉住 / 编辑后自动转为正式标签（见 pinPreview 与 handleContentChange）。
+  const active = openFiles[activeIdx];
+  const canReplacePreview = !!active
+    && active.isPreview === true
+    && !isFileDirty(active.content, active.originalContent)
+    && !active.path.startsWith('untitled-');
+
   const nf: OpenFile = {
     path: filePath,
     name: filePath.split(/[\\/]/).pop() || 'untitled',
     content,
     language,
     originalContent: content,
+    isPreview: true,
   };
+
+  if (canReplacePreview) {
+    const next = [...openFiles];
+    next[activeIdx] = nf;
+    return { openFiles: next, activeIdx, selectedFile: filePath };
+  }
+
   const next = [...openFiles, nf];
   return { openFiles: next, activeIdx: next.length - 1, selectedFile: filePath };
+}
+
+/** 将指定标签转为正式标签（双击钉住 / 点击标签 / 开始编辑时调用）。 */
+export function pinOpenFile(openFiles: OpenFile[], filePath: string): OpenFile[] {
+  return openFiles.map(f => (f.path === filePath && f.isPreview ? { ...f, isPreview: false } : f));
+}
+
+/** 打开文件时是否应作为预览标签（文件树单击路径）。 */
+export function isPreviewFile(file: OpenFile): boolean {
+  return file.isPreview === true;
 }
 
 export function closeWorkspaceState(_openFiles: OpenFile[]): WorkspaceState {

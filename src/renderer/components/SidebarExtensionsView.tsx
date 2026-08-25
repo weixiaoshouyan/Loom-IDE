@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import ExtensionMarketplace from './ExtensionMarketplace';
 import { confirmDialog } from './ConfirmModal';
 import { t } from '@/shared/i18n';
+import { emitLoomEvent } from '../loom-events';
 
 export default function SidebarExtensionsView({ locale, workspacePath, onOpenFile }: { locale?: 'zh-CN' | 'en-US'; workspacePath?: string; onOpenFile?: (path: string, content: string) => void; }) {
   const [extensions, setExtensions] = useState<any[]>([]);
@@ -47,13 +48,13 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
     try {
       const r = await window.loom?.plugins?.installFromFile?.();
       if (r?.ok) {
-        window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: r.msg, type: 'success' } }));
+        emitLoomEvent('loom:notify', { message: r.msg, type: 'success' });
         refresh();
       } else if (r?.msg) {
-        window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: r.msg, type: 'error' } }));
+        emitLoomEvent('loom:notify', { message: r.msg, type: 'error' });
       }
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: e.message, type: 'error' } }));
+      emitLoomEvent('loom:notify', { message: e.message, type: 'error' });
     }
     setBusy(null);
   };
@@ -61,7 +62,7 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
   const openSamplePlugin = async () => {
     // Create a sample plugin folder in workspace if available
     if (!workspacePath || !onOpenFile) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: t('extensions.openFolderFirst'), type: 'info' } }));
+      emitLoomEvent('loom:notify', { message: t('extensions.openFolderFirst'), type: 'info' });
       return;
     }
     const sep = workspacePath.includes('\\') ? '\\' : '/';
@@ -85,10 +86,10 @@ export default function SidebarExtensionsView({ locale, workspacePath, onOpenFil
       await window.loom.fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2));
       const mainJs = `// Loom plugin: registers a single command "sample.helloWorld"\nfunction activate(api) {\n  api.registerCommand('sample.helloWorld', () => {\n    api.showInformationMessage('Hello from Loom plugin!');\n  });\n  api.showInformationMessage('Sample plugin activated.');\n}\nmodule.exports = { activate };\n`;
       await window.loom.fs.writeFile(mainPath, mainJs);
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: t('extensions.samplePluginCreated'), type: 'success' } }));
+      emitLoomEvent('loom:notify', { message: t('extensions.samplePluginCreated'), type: 'success' });
       onOpenFile(mainPath, mainJs);
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: e.message, type: 'error' } }));
+      emitLoomEvent('loom:notify', { message: e.message, type: 'error' });
     }
   };
 

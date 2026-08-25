@@ -1255,23 +1255,22 @@ function runTscCheck(ws: string, timeoutMs = 120000): Promise<{ ok: boolean; out
     let stdout = '';
     let stderr = '';
     let settled = false;
-    const finish = (payload: { ok: boolean; output: string; error?: string }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(payload);
-    };
-    let timer: ReturnType<typeof setTimeout>;
     const child = spawn(process.execPath, [tscEntry, '--noEmit', '--pretty'], {
       cwd: ws,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       windowsHide: true,
       shell: false,
     });
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       try { child.kill(); } catch {}
       finish({ ok: false, output: stdout + stderr, error: `tsc timed out after ${timeoutMs}ms` });
     }, timeoutMs);
+    const finish = (payload: { ok: boolean; output: string; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(payload);
+    };
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
     child.on('error', (err: Error) => finish({ ok: false, output: '', error: err.message }));

@@ -83,6 +83,50 @@ export function startVerification(state: AgentTaskState, command: string): Agent
   };
 }
 
+/**
+ * 引擎自动验证（verify mode）进度：进入验证阶段但保持任务未完成。
+ * 与 startVerification 的区别：完成后把状态恢复为 running（引擎还会继续修），
+ * 而不是直接置为 completed/failed。
+ */
+export function setVerifying(state: AgentTaskState, command: string): AgentTaskState {
+  return {
+    ...state,
+    status: 'verifying',
+    verification: {
+      command,
+      status: 'running',
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      startedAt: Date.now(),
+      finishedAt: null,
+    },
+  };
+}
+
+export function setVerificationResult(
+  state: AgentTaskState,
+  passed: boolean,
+  exitCode: number | null,
+  output: string,
+): AgentTaskState {
+  return {
+    ...state,
+    // 引擎侧验证失败后会继续修复，任务并未终结；保持 running 而非 failed。
+    status: state.status === 'verifying' ? 'running' : state.status,
+    verification: {
+      command: state.verification?.command || 'verification',
+      startedAt: state.verification?.startedAt || Date.now(),
+      status: passed ? 'passed' : 'failed',
+      exitCode,
+      stdout: output,
+      stderr: '',
+      finishedAt: Date.now(),
+    },
+    error: null,
+  };
+}
+
 export function finishVerification(
   state: AgentTaskState,
   exitCode: number,

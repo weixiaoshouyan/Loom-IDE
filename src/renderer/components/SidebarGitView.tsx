@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { t } from '@/shared/i18n';
 import DiffViewModal from './DiffViewModal';
+import { emitLoomEvent } from '../loom-events';
 
 export default function SidebarGitView({ workspacePath, onOpenFile, locale }: {
   workspacePath: string;
@@ -26,7 +27,7 @@ export default function SidebarGitView({ workspacePath, onOpenFile, locale }: {
       const content = await window.loom.fs.readFile(abs);
       if (typeof content === 'string' && !content.startsWith('__ERR__:')) {
         onOpenFile(abs, content);
-        window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line: 1 } }));
+        emitLoomEvent('loom:go-to-line', { line: 1 });
       }
     } catch { /* file may have been deleted */ }
   }, [onOpenFile, workspacePath]);
@@ -117,7 +118,7 @@ export default function SidebarGitView({ workspacePath, onOpenFile, locale }: {
     await window.loom.git?.checkout?.(workspacePath, branch);
     setActionMsg('');
     refresh();
-    window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
+    emitLoomEvent('loom:refresh-tree', undefined);
   };
 
   const statusColors: Record<string, string> = {

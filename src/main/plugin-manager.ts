@@ -26,6 +26,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import { loadPluginSandboxed, findUnknownCapabilities } from './plugin-sandbox';
+import { PluginWorkerHost } from './plugin-worker';
 
 /**
  * Validate a plugin manifest `main` entry so that `require()` cannot escape the
@@ -238,6 +239,8 @@ export interface LoomPluginAPI {
   private webviewPanels: Map<string, WebviewPanel> = new Map();
   // renderer-facing listener for webview lifecycle events
   private webviewListener?: (event: { type: 'create' | 'dispose' | 'message'; panelId: string; payload?: any }) => void;
+  // worker 隔离线程宿主：plugin name → PluginWorkerHost（激活/命令执行在独立线程）
+  private pluginHosts: Map<string, PluginWorkerHost> = new Map();
 
   constructor() {
     const userData = app.getPath('userData');
@@ -407,8 +410,12 @@ export interface LoomPluginAPI {
    * Activate a plugin: register contributed commands/configuration, then load
    * its main entry (if any) and call `activate(api)` if defined.
    * Built-in plugins have no main, but we still register contributions.
+   *
+   * Main loading + activate() run through `activateInHost` (vm sandbox + 30s
+   * timeout) — see plugin-host.ts. A hung plugin activation resolves as a
+   * failure instead of blocking startup indefinitely.
    */
-  private activatePlugin(plugin: Plugin) {
+  private async activatePlugin(plugin: Plugin) {
     try {
       // 1. Register contributes
       const contribs = plugin.manifest.contributes;
@@ -433,7 +440,9 @@ export interface LoomPluginAPI {
         }
       }
 
-      // 2. Load main entry
+      // 2. Load main entry in an isolated worker thread (PluginWorkerHost).
+      //    worker 可被 terminate —— 死循环插件激活无法再卡死主进程
+      //    （旧 activateInHost 的 JS 超时无法中断同步死循环）。
       if (plugin.manifest.main) {
         const sane = sanitizePluginEntry(plugin.manifest.main);
         if (!sane.ok) {
@@ -441,40 +450,57 @@ export interface LoomPluginAPI {
           this.pushNotification('error', `Plugin "${plugin.manifest.name}" activation error: ${sane.msg}`, plugin.manifest.name);
           return;
         }
-        const mainPath = path.join(plugin.path, sane.main!);
-        // Defense-in-depth: never require anything outside the plugin root.
-        if (!isInsidePluginRoot(plugin.path, mainPath)) {
-          plugin.lastError = 'Plugin entry escapes plugin directory';
-          this.pushNotification('error', `Plugin "${plugin.manifest.name}" activation error: entry escapes plugin directory`, plugin.manifest.name);
-          return;
-        }
-        if (fs.existsSync(mainPath)) {
-          try {
-            // Validate declared capabilities up front so a typo doesn't silently
-            // grant nothing (or look like it grants something it doesn't).
-            const declared = Array.isArray(plugin.manifest.capabilities) ? plugin.manifest.capabilities : [];
-            const unknown = findUnknownCapabilities(declared);
-            if (unknown.length > 0) {
-              plugin.lastError = `Unknown plugin capabilities: ${unknown.join(', ')}`;
-              this.pushNotification('error', `Plugin "${plugin.manifest.name}" declares unknown capabilities: ${unknown.join(', ')}`, plugin.manifest.name);
+        const declared = Array.isArray(plugin.manifest.capabilities) ? plugin.manifest.capabilities : [];
+        try {
+          const host = await PluginWorkerHost.spawn({
+            pluginName: plugin.manifest.name,
+            pluginRoot: plugin.path,
+            mainRel: sane.main || plugin.manifest.main,
+            capabilities: declared,
+          }, 30000);
+          this.pluginHosts.set(plugin.manifest.name, host);
+          // worker 通知 → 主进程通知队列
+          host.onNotify((m) => {
+            const level = m.level === 'error' ? 'error' : m.level === 'warn' ? 'warn' : 'info';
+            this.pushNotification(level, m.msg || '', plugin.manifest.name);
+          });
+          // worker webview 面板（沿用主进程 webview 面板语义）
+          host.onWebview((m) => {
+            if (m.dispose) {
+              this.webviewPanels.delete(m.panelId || '');
+              this.webviewListener?.({ type: 'dispose', panelId: m.panelId || '' });
               return;
             }
-            // Load the entry inside a capability-gated vm sandbox instead of a
-            // bare require(), so plugin code cannot reach child_process/fs/net
-            // unless the manifest explicitly asks for it.
-            const mod = loadPluginSandboxed(mainPath, { pluginRoot: plugin.path, capabilities: declared });
-            const api = this.buildAPI(plugin);
-            const activate = mod.activate || mod.default?.activate;
-            if (typeof activate === 'function') {
-              activate(api);
-            }
-          } catch (e: any) {
-            plugin.lastError = `Failed to load main: ${e.message}`;
-            this.pushNotification('error', `Plugin "${plugin.manifest.name}" failed to activate: ${e.message}`, plugin.manifest.name);
+            const panel: WebviewPanel = {
+              id: m.panelId || '',
+              title: m.title || '',
+              html: m.html,
+              url: m.url,
+              postMessage: () => {},
+              dispose: () => { this.webviewPanels.delete(m.panelId || ''); },
+            };
+            this.webviewPanels.set(m.panelId || '', panel);
+            this.webviewListener?.({ type: 'create', panelId: m.panelId || '', payload: { title: m.title, html: m.html, url: m.url } });
+          });
+          // 把 worker 内注册的命令桥接进主进程命令注册表
+          for (const cmd of host.getCommands()) {
+            const arr = this.commandRegistry.get(cmd) || [];
+            arr.push({
+              plugin: plugin.manifest.name,
+              handler: async (...args: unknown[]) => {
+                const r = await host.execute(cmd, args);
+                if (!r.ok) throw new Error(r.error || 'command failed');
+                return r.result;
+              },
+            });
+            this.commandRegistry.set(cmd, arr);
           }
+        } catch (e: any) {
+          plugin.lastError = e?.message || 'activation failed';
+          this.pushNotification('error', `Plugin "${plugin.manifest.name}" activation error: ${e?.message || e}`, plugin.manifest.name);
+          return;
         }
       }
-
       plugin.activated = true;
       plugin.lastError = undefined;
     } catch (e: any) {
@@ -494,16 +520,20 @@ export interface LoomPluginAPI {
     for (const [key, cfg] of this.configurationRegistry) {
       if (cfg.plugin === plugin.manifest.name) this.configurationRegistry.delete(key);
     }
+    // terminate worker 隔离线程
+    this.pluginHosts.get(plugin.manifest.name)?.terminate();
+    this.pluginHosts.delete(plugin.manifest.name);
     plugin.activated = false;
   }
 
   /**
    * Activate all enabled plugins that haven't been activated yet.
-   * Called once at startup.
+   * Called once at startup. Activations run through activateInHost (30s
+   * timeout) so a misbehaving plugin cannot freeze the main process forever.
    */
-  activateAll() {
+  async activateAll() {
     for (const plugin of this.getEnabledPlugins()) {
-      if (!plugin.activated) this.activatePlugin(plugin);
+      if (!plugin.activated) await this.activatePlugin(plugin);
     }
   }
 

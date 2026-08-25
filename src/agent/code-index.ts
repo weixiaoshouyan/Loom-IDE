@@ -3,6 +3,11 @@ import path from 'path';
 import { glob } from 'glob';
 import TreeSitter from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
+import Python from 'tree-sitter-python';
+import Go from 'tree-sitter-go';
+import Rust from 'tree-sitter-rust';
+import C from 'tree-sitter-c';
+import Java from 'tree-sitter-java';
 
 export interface CodeSymbol {
   id: string;
@@ -26,40 +31,164 @@ export interface BuildCodeIndexOptions {
   onProgress?: (processed: number, total: number) => void;
 }
 
-const parser = new TreeSitter();
-parser.setLanguage(TypeScript.typescript as any);
+// ===== Multi-language support =================================================
+// Each grammar declares which node types count as symbols and how to classify
+// them. Node-type names follow the tree-sitter grammar conventions for each
+// language. `nameField` is the field name carrying the identifier (almost
+// always 'name').
+interface LanguageDef {
+  id: string;
+  globs: string[];
+  /** 显式扩展名表（glob 大括号形式无法用 includes 判断） */
+  exts: string[];
+  load: () => any; // tree-sitter@0.21 typings lack the Language type
+  symbolTypes: Record<string, CodeSymbol['kind']>;
+}
 
-const CODE_FILE_GLOBS = ['**/*.{ts,tsx,js,jsx,mjs,cjs}', '!**/node_modules/**', '!**/dist/**', '!**/.git/**', '!**/coverage/**', '!**/.loom/**'];
+const LANGUAGES: LanguageDef[] = [
+  {
+    id: 'typescript',
+    globs: ['**/*.{ts,tsx,mts,cts}'],
+    exts: ['.ts', '.tsx', '.mts', '.cts'],
+    load: () => TypeScript.typescript,
+    symbolTypes: {
+      function_declaration: 'function',
+      class_declaration: 'class',
+      interface_declaration: 'interface',
+      type_alias_declaration: 'type',
+      method_definition: 'method',
+      variable_declarator: 'variable',
+    },
+  },
+  {
+    id: 'javascript',
+    globs: ['**/*.{js,jsx,mjs,cjs}'],
+    exts: ['.js', '.jsx', '.mjs', '.cjs'],
+    // tree-sitter-typescript 只导出 typescript/tsx；TS 语法可解析 JS（宽松子集）
+    load: () => TypeScript.typescript,
+    symbolTypes: {
+      function_declaration: 'function',
+      class_declaration: 'class',
+      method_definition: 'method',
+      variable_declarator: 'variable',
+    },
+  },
+  {
+    id: 'python',
+    globs: ['**/*.py', '**/*.pyw'],
+    exts: ['.py', '.pyw'],
+    load: () => Python,
+    symbolTypes: {
+      function_definition: 'function',
+      class_definition: 'class',
+    },
+  },
+  {
+    id: 'go',
+    globs: ['**/*.go'],
+    exts: ['.go'],
+    load: () => Go,
+    symbolTypes: {
+      function_declaration: 'function',
+      method_declaration: 'method',
+      type_declaration: 'type',
+    },
+  },
+  {
+    id: 'rust',
+    globs: ['**/*.rs'],
+    exts: ['.rs'],
+    load: () => Rust,
+    symbolTypes: {
+      function_item: 'function',
+      struct_item: 'class',
+      enum_item: 'type',
+      trait_item: 'interface',
+      impl_item: 'class',
+      type_item: 'type',
+      const_item: 'variable',
+      static_item: 'variable',
+      mod_item: 'other',
+    },
+  },
+  {
+    id: 'c',
+    globs: ['**/*.{c,h,cc,cpp,cxx,hpp}'],
+    exts: ['.c', '.h', '.cc', '.cpp', '.cxx', '.hpp'],
+    load: () => C,
+    symbolTypes: {
+      function_definition: 'function',
+      struct_specifier: 'class',
+      union_specifier: 'type',
+      enum_specifier: 'type',
+    },
+  },
+  {
+    id: 'java',
+    globs: ['**/*.java'],
+    exts: ['.java'],
+    load: () => Java,
+    symbolTypes: {
+      class_declaration: 'class',
+      interface_declaration: 'interface',
+      enum_declaration: 'type',
+      record_declaration: 'class',
+      annotation_type_declaration: 'type',
+      method_declaration: 'method',
+      constructor_declaration: 'method',
+    },
+  },
+];
 
-function kindFromNode(type: string): CodeSymbol['kind'] {
-  switch (type) {
-    case 'function_declaration':
-    case 'arrow_function':
-    case 'function':
-      return 'function';
-    case 'class_declaration':
-    case 'class':
-      return 'class';
-    case 'interface_declaration':
-      return 'interface';
-    case 'type_alias_declaration':
-      return 'type';
-    case 'method_definition':
-      return 'method';
-    case 'property_identifier':
-      return 'property';
-    case 'variable_declarator':
-      return 'variable';
-    default:
-      return 'other';
+const EXCLUDED_GLOBS = [
+  '!**/node_modules/**', '!**/dist/**', '!**/.git/**', '!**/coverage/**',
+  '!**/.loom/**', '!**/build/**', '!**/out/**', '!**/target/**', '!**/__pycache__/**',
+  '!**/.venv/**', '!**/venv/**', '!**/.next/**', '!**/vendor/**',
+];
+
+export const CODE_FILE_GLOBS = [...LANGUAGES.flatMap(l => l.globs), ...EXCLUDED_GLOBS];
+
+// Lazily-initialized per-language parser cache (parsers are not shareable
+// across languages; a parser is bound to one language at a time).
+const parserCache = new Map<string, { parser: TreeSitter; language: any }>();
+
+function getParser(langId: string): { parser: TreeSitter; language: any } | null {
+  const def = LANGUAGES.find(l => l.id === langId);
+  if (!def) return null;
+  let entry = parserCache.get(langId);
+  if (!entry) {
+    try {
+      const language = def.load();
+      const parser = new TreeSitter();
+      parser.setLanguage(language);
+      entry = { parser, language };
+      parserCache.set(langId, entry);
+    } catch {
+      return null;
+    }
   }
+  return entry;
+}
+
+function kindFromNode(langId: string, type: string): CodeSymbol['kind'] {
+  const def = LANGUAGES.find(l => l.id === langId);
+  return def?.symbolTypes[type] || 'other';
 }
 
 function extractName(node: TreeSitter.SyntaxNode): string | undefined {
   const nameNode = node.childForFieldName('name');
   if (nameNode) return nameNode.text;
-  if (node.type === 'variable_declarator') {
-    return node.childForFieldName('name')?.text;
+  // Fallback: first identifier-like child (Java constructors, Go type specs, …)
+  const stack: TreeSitter.SyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (let i = cur.childCount - 1; i >= 0; i--) {
+      const child = cur.child(i)!;
+      if (/identifier|type_identifier|field_identifier/.test(child.type) && child.text) {
+        return child.text;
+      }
+      stack.push(child);
+    }
   }
   return undefined;
 }
@@ -67,24 +196,20 @@ function extractName(node: TreeSitter.SyntaxNode): string | undefined {
 function extractDocs(node: TreeSitter.SyntaxNode): string | undefined {
   const prev = node.previousSibling;
   if (prev && prev.type === 'comment') {
-    return prev.text.replace(/\/\*\*|\*\/|\*|\/\/\/\s?/g, '').trim();
+    return prev.text.replace(/\/\*\*|\*\/|\*|\/\/\/?\s?|#|\/\/\s?/g, '').trim();
   }
   return undefined;
 }
 
-function collectSymbols(node: TreeSitter.SyntaxNode, filePath: string, symbols: CodeSymbol[]) {
-  const interesting = new Set([
-    'function_declaration', 'class_declaration', 'interface_declaration',
-    'type_alias_declaration', 'method_definition', 'variable_declarator',
-  ]);
-
-  if (interesting.has(node.type)) {
+function collectSymbols(langId: string, node: TreeSitter.SyntaxNode, filePath: string, symbols: CodeSymbol[]) {
+  const def = LANGUAGES.find(l => l.id === langId);
+  if (def && def.symbolTypes[node.type]) {
     const name = extractName(node);
     if (name && !name.startsWith('_')) {
       symbols.push({
         id: `${filePath}::${name}@${node.startPosition.row}`,
         name,
-        kind: kindFromNode(node.type),
+        kind: kindFromNode(langId, node.type),
         filePath,
         startLine: node.startPosition.row + 1,
         endLine: node.endPosition.row + 1,
@@ -95,18 +220,30 @@ function collectSymbols(node: TreeSitter.SyntaxNode, filePath: string, symbols: 
   }
 
   for (let i = 0; i < node.childCount; i++) {
-    collectSymbols(node.child(i)!, filePath, symbols);
+    collectSymbols(langId, node.child(i)!, filePath, symbols);
   }
+}
+
+function langIdForFile(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  for (const def of LANGUAGES) {
+    if (def.exts.includes(ext)) return def.id;
+  }
+  return null;
 }
 
 async function parseFile(filePath: string, maxFileSize: number): Promise<CodeSymbol[]> {
   try {
     const stat = await fs.promises.stat(filePath);
     if (stat.size > maxFileSize) return [];
+    const langId = langIdForFile(filePath);
+    if (!langId) return [];
+    const entry = getParser(langId);
+    if (!entry) return [];
     const source = await fs.promises.readFile(filePath, 'utf-8');
-    const tree = parser.parse(source);
+    const tree = entry.parser.parse(source);
     const symbols: CodeSymbol[] = [];
-    collectSymbols(tree.rootNode, filePath, symbols);
+    collectSymbols(langId, tree.rootNode, filePath, symbols);
     return symbols;
   } catch {
     return [];

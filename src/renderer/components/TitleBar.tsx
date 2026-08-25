@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getLoom } from '../loom-ipc';
+import { t } from '@/shared/i18n';
 
 interface MenuItem {
   label?: string;
@@ -82,13 +83,13 @@ export default function TitleBar({ title, menuItems }: Props) {
       </div>
       <div className="titlebar-center">{title}</div>
       <div className="titlebar-right">
-        <button className="titlebar-btn" title="Minimize" aria-label="Minimize" onClick={() => getLoom()?.window?.minimize()}>
+        <button className="titlebar-btn" title={t('titlebar.minimize')} aria-label={t('titlebar.minimize')} onClick={() => getLoom()?.window?.minimize()}>
           <svg width="10" height="10" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
         </button>
-        <button className="titlebar-btn" title="Maximize" aria-label="Maximize" onClick={() => getLoom()?.window?.maximize()}>
+        <button className="titlebar-btn" title={t('titlebar.maximize')} aria-label={t('titlebar.maximize')} onClick={() => getLoom()?.window?.maximize()}>
           <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
         </button>
-        <button className="titlebar-btn close" title="Close" aria-label="Close" onClick={() => getLoom()?.window?.close()}>
+        <button className="titlebar-btn close" title={t('titlebar.close')} aria-label={t('titlebar.close')} onClick={() => getLoom()?.window?.close()}>
           <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1.2"/></svg>
         </button>
       </div>

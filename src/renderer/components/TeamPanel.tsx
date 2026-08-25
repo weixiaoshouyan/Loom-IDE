@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getLoom } from '../loom-ipc';
+import { emitLoomEvent } from '../loom-events';
 
 interface Props {
   workspacePath: string;
@@ -28,7 +29,7 @@ export default function TeamPanel({ workspacePath, onClose }: Props) {
 
   const saveRules = async () => {
     await getLoom()?.team?.saveRules?.(workspacePath, rules);
-    window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: '团队规则已保存', type: 'success' } }));
+    emitLoomEvent('loom:notify', { message: '团队规则已保存', type: 'success' });
   };
 
   return (

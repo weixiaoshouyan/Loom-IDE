@@ -9,7 +9,28 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { ensurePathAllowed } from './path-permissions';
 
+/**
+ * SECURITY: git options that let a crafted argument escape the workspace or
+ * execute external hooks. `-c key=val` (incl. `core.hooksPath=...`), `-C <dir>`,
+ * `--git-dir` / `--work-tree` / `--exec-path` / `--config-env` all redirect
+ * git's behavior to attacker-chosen paths — the AI agent's onGitCommand and
+ * every UI handler route through runGit, so blocking here covers both.
+ */
+const UNSAFE_GIT_ARGS = new Set(['-c', '-C', '--config-env', '--work-tree', '--git-dir', '--exec-path', '--namespace']);
+const UNSAFE_GIT_ARG_PREFIXES = ['-c=', '--config-env=', '--work-tree=', '--git-dir=', '--exec-path=', '--namespace='];
+
+export function hasUnsafeGitArg(args: string[]): boolean {
+  for (const a of args) {
+    if (UNSAFE_GIT_ARGS.has(a)) return true;
+    if (UNSAFE_GIT_ARG_PREFIXES.some(p => a.startsWith(p))) return true;
+  }
+  return false;
+}
+
 export function runGit(cwd: string, args: string[]): Promise<string> {
+  if (hasUnsafeGitArg(args)) {
+    return Promise.reject(new Error('Unsafe git argument blocked (c/hooks/--work-tree/--git-dir etc.)'));
+  }
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';

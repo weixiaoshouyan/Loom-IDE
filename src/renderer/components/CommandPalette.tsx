@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { emitLoomEvent } from '../loom-events';
 
 interface Command {
   id: string;
@@ -249,10 +250,10 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
           try {
             const r = await window.loom?.plugins?.executeCommand?.(p.command) as any;
             if (r && !r.ok && r.msg) {
-              window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: r.msg, type: 'warn' } }));
+              emitLoomEvent('loom:notify', { message: r.msg, type: 'warning' });
             }
           } catch (e: any) {
-            window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: e.message, type: 'error' } }));
+            emitLoomEvent('loom:notify', { message: e.message, type: 'error' });
           }
         },
       });
@@ -357,7 +358,7 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
         // 跳到指定行（symbol 跳转用）
         if (item.startLine && item.startLine > 0) {
           setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line: item.startLine } }));
+            emitLoomEvent('loom:go-to-line', { line: item.startLine });
           }, 50);
         }
       }).catch(() => {});
@@ -368,7 +369,7 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
         onOpenFile(item.filePath!, content);
         if (item.startLine && item.startLine > 0) {
           setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line: item.startLine } }));
+            emitLoomEvent('loom:go-to-line', { line: item.startLine });
           }, 50);
         }
       }).catch(() => {});
@@ -418,7 +419,7 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
           />
           <span className={`command-palette-mode-tag ${modeTag.cls}`}>{modeTag.text}</span>
         </div>
-        <div className="command-palette-list" ref={listRef}>
+        <div className="command-palette-list" ref={listRef} role="listbox" aria-activedescendant={flatItems[selectedIdx] ? `cmd-item-${selectedIdx}` : undefined} aria-label="Commands and files">
           {flatItems.length === 0 && (isCommandMode ? (
             <div className="command-palette-empty">No matching commands</div>
           ) : isSymbolMode ? (
@@ -448,6 +449,9 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
                   return (
                     <div
                       key={item.id}
+                      id={`cmd-item-${i}`}
+                      role="option"
+                      aria-selected={i === selectedIdx}
                       className={`command-item ${i === selectedIdx ? 'selected' : ''}`}
                       onClick={() => executeItem(item)}
                       onMouseEnter={() => setSelectedIdx(i)}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { OpenFile } from '../App';
 import { getLoom } from '../loom-ipc';
+import { emitLoomEvent, onLoomEvent } from '../loom-events';
 
 interface Props {
   workspacePath: string;
@@ -22,8 +23,7 @@ function StatusBar({
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
   const [tabSize, setTabSize] = useState(2);
   const [eol, setEol] = useState<'LF' | 'CRLF'>('LF');
-  const [encoding, setEncoding] = useState('UTF-8');
-  const [openMenu, setOpenMenu] = useState<'theme' | 'eol' | 'encoding' | 'locale' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'theme' | 'eol' | 'locale' | null>(null);
   const [fontSize, setFontSize] = useState(14);
   const containerRef = useRef<HTMLDivElement>(null);
   const [modelInfo, setModelInfo] = useState<{ provider: string; model: string; mode: string } | null>(null);
@@ -55,9 +55,14 @@ function StatusBar({
   }, []);
 
   useEffect(() => {
-    const handler = (e: CustomEvent) => setCursor({ line: e.detail.line, col: e.detail.column });
-    window.addEventListener('loom:cursor-change' as any, handler);
-    return () => window.removeEventListener('loom:cursor-change' as any, handler);
+    return onLoomEvent('loom:cursor-change', ({ line, column }) => setCursor({ line, col: column }));
+  }, []);
+
+  // 从编辑器读取真实行尾符（EOL），切换 EOL 也由编辑器实际执行
+  useEffect(() => {
+    return onLoomEvent('loom:editor-state', ({ eol }) => {
+      if (eol === 'CRLF' || eol === 'LF') setEol(eol);
+    });
   }, []);
 
   // Close popups on outside click
@@ -85,7 +90,7 @@ function StatusBar({
           title={agentStatus === 'offline'
             ? (locale === 'zh-CN' ? 'AI 未配置 — 点击打开设置' : 'AI not configured — click to open settings')
             : aiMode === 'orca' ? `Orca: ${orcaOnline ? 'Online' : 'Offline'}` : `AI: ${agentStatus === 'online' ? 'Online' : 'Offline'}`}
-          onClick={() => { if (agentStatus === 'offline') window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openSettings' })); }}
+          onClick={() => { if (agentStatus === 'offline') emitLoomEvent('loom:cmd', 'openSettings'); }}
         >
           <span className="statusbar-status-dot" style={{ background: agentStatus === 'online' ? '#6bfa6b' : 'rgba(255,255,255,0.5)' }} />
           AI {agentStatus === 'online' ? 'OK' : 'OFF'}
@@ -111,7 +116,7 @@ function StatusBar({
           <div
             className="statusbar-item clickable"
             title={`当前模型：${modelInfo.provider} / ${modelInfo.model}（${modelInfo.mode === 'orca' ? 'Orca 代理' : '直连 API'}）`}
-            onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openSettings' }))}
+            onClick={() => emitLoomEvent('loom:cmd', 'openSettings')}
           >
             <span className="statusbar-model-dot" />
             {modelInfo.provider || '未配置'} · {modelInfo.model || '—'}
@@ -128,29 +133,20 @@ function StatusBar({
         {activeFile && <div className="statusbar-item" style={{ fontVariantNumeric: 'tabular-nums' }}>Ln {cursor.line}, Col {cursor.col}</div>}
         {activeFile && <div className="statusbar-item">Spaces: {tabSize}</div>}
         {activeFile && <div className="statusbar-item">{activeFile.language?.charAt(0)?.toUpperCase?.() ?? ''}{activeFile.language?.slice(1) ?? 'Plain'}</div>}
-        <div className="statusbar-item clickable" onClick={() => setOpenMenu(openMenu === 'encoding' ? null : 'encoding')}>
-          {encoding}
-          <span className="caret">▾</span>
-          {openMenu === 'encoding' && (
-            <div className="statusbar-popup" onClick={e => e.stopPropagation()}>
-              {['UTF-8', 'UTF-16', 'GBK', 'ISO-8859-1'].map(enc => (
-                <div key={enc} className={`statusbar-popup-item ${enc === encoding ? 'active' : ''}`}
-                  onClick={() => { setEncoding(enc); setOpenMenu(null); }}>
-                  {enc === encoding && '✓ '}{enc}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="statusbar-item clickable" onClick={() => setOpenMenu(openMenu === 'eol' ? null : 'eol')}>
+        <div className="statusbar-item clickable" onClick={() => setOpenMenu(openMenu === 'eol' ? null : 'eol')}
+          title={locale === 'zh-CN' ? '切换行尾符（切换后将标记为已修改）' : 'Switch line ending (marks file as modified)'}>
           {eol}
           <span className="caret">▾</span>
           {openMenu === 'eol' && (
             <div className="statusbar-popup" onClick={e => e.stopPropagation()}>
               {(['LF', 'CRLF'] as const).map(e => (
                 <div key={e} className={`statusbar-popup-item ${e === eol ? 'active' : ''}`}
-                  onClick={() => { setEol(e); setOpenMenu(null); }}>
-                  {e === eol && '✓ '}{e}
+                  onClick={() => {
+                    // 由编辑器实际执行 setEOL，状态栏随后通过 loom:editor-state 同步
+                    emitLoomEvent('loom:editor-action', { action: 'toggleEOL' });
+                    setOpenMenu(null);
+                  }}>
+                  {e === eol ? '✓ ' : '  '}{e}
                 </div>
               ))}
             </div>
@@ -186,7 +182,7 @@ function StatusBar({
                 { id: 'en-US' as const, label: '🇺🇸 English' },
               ].map(l => (
                 <div key={l.id} className={`statusbar-popup-item ${l.id === locale ? 'active' : ''}`}
-                  onClick={() => { window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'locale', value: l.id } })); setOpenMenu(null); }}>
+                  onClick={() => { emitLoomEvent('loom:setting-change', { key: 'locale', value: l.id }); setOpenMenu(null); }}>
                   {l.id === locale && '✓ '}{l.label}
                 </div>
               ))}

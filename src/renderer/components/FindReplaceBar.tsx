@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as monaco from 'monaco-editor';
+import { t } from '@/shared/i18n';
 
 const WORD_SEP = '~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?\n\t';
 
@@ -15,7 +16,17 @@ export default function FindReplaceBar({ editor, locale }: { editor: monaco.edit
   const findInputRef = useRef<HTMLInputElement>(null);
   const decorationsRef = useRef<string[]>([]);
 
-  useEffect(() => { setTimeout(() => findInputRef.current?.focus(), 30); }, []);
+  useEffect(() => {
+    // VS Code 语义：打开查找时用当前选区初始化查找词
+    const selection = editor?.getSelection();
+    const selectedText = selection && !selection.isEmpty()
+      ? editor!.getModel()?.getValueInRange(selection) ?? ''
+      : '';
+    if (selectedText && selectedText.trim() && selectedText.length <= 200) {
+      setFindText(selectedText);
+    }
+    setTimeout(() => findInputRef.current?.focus(), 30);
+  }, [editor]);
 
   useEffect(() => {
     if (!editor || !findText) {
@@ -140,26 +151,26 @@ export default function FindReplaceBar({ editor, locale }: { editor: monaco.edit
   return (
     <div className="find-replace-bar">
       <div className="find-row">
-        <input ref={findInputRef} className="find-input" placeholder="Find" value={findText}
+        <input ref={findInputRef} className="find-input" placeholder={t('find.findPlaceholder')} value={findText}
           onChange={e => setFindText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { (e.shiftKey ? findPrev : findNext)(); } }} />
         <span className="find-count" style={{ color: findText ? (matchCount > 0 ? 'var(--text-primary)' : 'var(--red)') : 'var(--text-muted)' }}>
           {findText ? `${currentMatch}/${matchCount}` : ''}
         </span>
-        <button className={`find-btn ${matchCase ? 'active' : ''}`} onClick={() => setMatchCase(!matchCase)} title="Match Case" aria-label="Match Case">Aa</button>
-        <button className={`find-btn ${wholeWord ? 'active' : ''}`} onClick={() => setWholeWord(!wholeWord)} title="Whole Word" aria-label="Whole Word">ab</button>
-        <button className={`find-btn ${useRegex ? 'active' : ''}`} onClick={() => setUseRegex(!useRegex)} title="Regex" aria-label="Use Regex">.*</button>
-        <button className="find-btn" onClick={findPrev} title="Previous" aria-label="Previous match"><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg></button>
-        <button className="find-btn" onClick={findNext} title="Next" aria-label="Next match"><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg></button>
-        <button className="find-btn" onClick={close} title="Close" aria-label="Close find"><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg></button>
+        <button className={`find-btn ${matchCase ? 'active' : ''}`} onClick={() => setMatchCase(!matchCase)} title={t('find.matchCase')} aria-label={t('find.matchCase')}>Aa</button>
+        <button className={`find-btn ${wholeWord ? 'active' : ''}`} onClick={() => setWholeWord(!wholeWord)} title={t('find.wholeWord')} aria-label={t('find.wholeWord')}>ab</button>
+        <button className={`find-btn ${useRegex ? 'active' : ''}`} onClick={() => setUseRegex(!useRegex)} title={t('find.regex')} aria-label={t('find.regex')}>.*</button>
+        <button className="find-btn" onClick={findPrev} title={t('find.previous')} aria-label={t('find.previous')}><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg></button>
+        <button className="find-btn" onClick={findNext} title={t('find.next')} aria-label={t('find.next')}><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5"/></svg></button>
+        <button className="find-btn" onClick={close} title={t('find.close')} aria-label={t('find.close')}><svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg></button>
       </div>
       {showReplace && (
         <div className="find-row">
-          <input className="find-input" placeholder="Replace" value={replaceText}
+          <input className="find-input" placeholder={t('find.replacePlaceholder')} value={replaceText}
             onChange={e => setReplaceText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') replaceOne(); }} />
-          <button className="find-btn" onClick={replaceOne} title="Replace" aria-label="Replace one" style={{ fontSize: 11 }}>1</button>
-          <button className="find-btn" onClick={replaceAll} title="Replace All" aria-label="Replace all" style={{ fontSize: 11 }}>All</button>
+          <button className="find-btn" onClick={replaceOne} title={t('find.replaceOne')} aria-label={t('find.replaceOne')} style={{ fontSize: 11 }}>1</button>
+          <button className="find-btn" onClick={replaceAll} title={t('find.replaceAll')} aria-label={t('find.replaceAll')} style={{ fontSize: 11 }}>{t('find.replaceAll')}</button>
         </div>
       )}
     </div>

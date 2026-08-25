@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import mockExtensions from '../../shared/marketplace-mock.json';
+import { emitLoomEvent } from '../loom-events';
 
 type ExtensionCategory = 'themes' | 'languages' | 'tools' | 'productivity' | 'ai' | 'other';
 type QuickFilter = 'recommended' | 'installed' | 'cursor' | 'verified' | null;
@@ -242,9 +243,7 @@ export default function ExtensionMarketplace({ locale = 'zh-CN', embedded = fals
         return;
       }
       setExtensions(prev => prev.map(item => item.id === ext.id ? { ...item, installed: true } : item));
-      window.dispatchEvent(new CustomEvent('loom:notify', {
-        detail: { message: `${copy.installed} ${ext.displayName}`, type: 'success' },
-      }));
+      emitLoomEvent('loom:notify', { message: `${copy.installed} ${ext.displayName}`, type: 'success' },);
       onInstalledChange?.();
     } catch (e: any) {
       setInstallErrors(prev => ({ ...prev, [ext.id]: e?.message || copy.failed }));

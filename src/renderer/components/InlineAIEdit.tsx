@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { t } from '@/shared/i18n';
 import { getLoom } from '../loom-ipc';
+import { emitLoomEvent } from '../loom-events';
 
 interface Props {
   editorRef: React.MutableRefObject<any>;
@@ -253,7 +254,7 @@ Return ONLY the edited code in a single code block with the language marker. Do 
     const msg = hunks.length > 0
       ? t('inlineEdit.appliedHunks', { accepted: acceptedCount, total: hunks.length })
       : t('inlineEdit.appliedFallback');
-    window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: msg, type: 'success' } }));
+    emitLoomEvent('loom:notify', { message: msg, type: 'success' });
   }, [buildMergedCode, editorRef, onClose, hunks]);
 
   const stopStreaming = () => {

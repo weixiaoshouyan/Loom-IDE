@@ -1,12 +1,23 @@
 /**
- * useKeyboardShortcuts — global keyboard shortcut handler extracted from App.tsx.
+ * useKeyboardShortcuts — 表驱动的全局快捷键处理器。
  *
- * Registers a single `keydown` listener that handles all IDE-level shortcuts
- * (file ops, view toggles, editor actions, debugger). Editor-specific actions
- * are dispatched via CustomEvent so the Editor component can handle them.
+ * 键位表见 ../keybindings（单一事实源）：本 hook 只负责
+ *   1. 从 settings 加载用户覆盖（settings.keybindings）；
+ *   2. 每次 keydown 用 matchKeybinding 匹配 → 分发到命令动作；
+ *   3. 输入框保护（只有白名单键生效）。
+ *
+ * 新增/修改快捷键 = 改 keybindings.ts 表 + 本文件的 dispatchAction 分发，
+ * 不再散落 if/return。
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { t } from '@/shared/i18n';
+import { emitLoomEvent, onLoomEvent } from '../loom-events';
+import {
+  matchKeybinding,
+  resolveKeybindings,
+  type KeybindingId,
+  type KeybindingOverrides,
+} from '../keybindings';
 
 export interface ShortcutActions {
   createUntitledFile: () => void;
@@ -23,6 +34,7 @@ export interface ShortcutActions {
   setPanelVisible: (fn: (p: boolean) => boolean) => void;
   setSplitMode: (fn: (p: boolean) => boolean) => void;
   setSettingsOpen: (v: boolean) => void;
+  cycleTabs: (dir: 1 | -1) => void;
 }
 
 export interface ShortcutState {
@@ -31,54 +43,94 @@ export interface ShortcutState {
   isDebugging: boolean;
 }
 
+/** 输入框聚焦时仍然生效的全局快捷键 id（保存/关闭标签/AI/终端/设置） */
+const INPUT_SAFE_IDS = new Set<KeybindingId>([
+  'file.save', 'file.saveAll', 'file.closeTab', 'ai.toggle', 'view.terminal', 'settings.open',
+]);
+
+/** 命令 id → 实际动作分发 */
+function dispatchAction(id: KeybindingId, a: ShortcutActions, s: ShortcutState): void {
+  switch (id) {
+    case 'file.new': a.createUntitledFile(); break;
+    case 'file.open': a.openFileFromDisk(); break;
+    case 'file.openFolder': a.openFolder(); break;
+    case 'file.save': emitLoomEvent('loom:format-and-save', { all: false }); break;
+    case 'file.saveAll': emitLoomEvent('loom:format-and-save', { all: true }); break;
+    case 'file.closeTab': if (s.openFilesCount) a.closeTab(s.activeIdx); break;
+    case 'file.revert': emitLoomEvent('loom:revert-file', undefined); break;
+    case 'view.commandPalette': a.setCmdPalette(() => true); break;
+    case 'view.quickOpen': a.setCmdPalette(() => true); break;
+    case 'view.explorer': a.setSidebarView('explorer'); break;
+    case 'view.search': a.setSidebarView('search'); break;
+    case 'view.git': a.setSidebarView('git'); break;
+    case 'view.extensions': a.setSidebarView('extensions'); break;
+    case 'view.outline': a.setSidebarView('outline'); break;
+    case 'view.terminal': a.setPanelVisible(p => !p); break;
+    case 'view.toggleSidebar': a.setSidebarView(v => v ? '' : 'explorer'); break;
+    case 'view.splitEditor': a.setSplitMode(p => !p); break;
+    case 'view.toggleWordWrap': emitLoomEvent('loom:setting-change', { key: 'editor.wordWrap', value: 'toggle' }); break;
+    case 'ai.toggle': a.setAiOpen(p => !p); break;
+    case 'editor.undo': emitLoomEvent('loom:editor-action', { action: 'undo' }); break;
+    case 'editor.redo': emitLoomEvent('loom:editor-action', { action: 'redo' }); break;
+    case 'editor.find': emitLoomEvent('loom:editor-action', { action: 'find' }); break;
+    case 'editor.replace': emitLoomEvent('loom:editor-action', { action: 'replace' }); break;
+    case 'editor.goToDefinition': emitLoomEvent('loom:editor-action', { action: 'goToDefinition' }); break;
+    case 'editor.peekDefinition': emitLoomEvent('loom:editor-action', { action: 'peekDefinition' }); break;
+    case 'editor.findReferences': emitLoomEvent('loom:editor-action', { action: 'findReferences' }); break;
+    case 'editor.rename': emitLoomEvent('loom:editor-action', { action: 'rename' }); break;
+    case 'editor.format': emitLoomEvent('loom:editor-action', { action: 'format' }); break;
+    case 'editor.toggleComment': emitLoomEvent('loom:editor-action', { action: 'toggleComment' }); break;
+    case 'debug.start': if (s.isDebugging) a.addOutput(t('app.debugContinue')); else a.startDebug(); break;
+    case 'debug.stop': a.stopDebug(); break;
+    case 'debug.run': a.runCurrentFile(); break;
+    case 'problems.next': emitLoomEvent('loom:problems-next', { dir: 1 }); break;
+    case 'problems.prev': emitLoomEvent('loom:problems-next', { dir: -1 }); break;
+    case 'settings.open': a.setSettingsOpen(true); break;
+    case 'tab.next': a.cycleTabs(1); break;
+    case 'tab.prev': a.cycleTabs(-1); break;
+    default: break;
+  }
+}
+
 export function useKeyboardShortcuts(actions: ShortcutActions, state: ShortcutState) {
+  // 用户键位覆盖（settings.keybindings）
+  const [overrides, setOverrides] = useState<KeybindingOverrides>({});
+
   useEffect(() => {
+    window.loom?.settings?.getAll?.().then((s: any) => {
+      if (s?.keybindings && typeof s.keybindings === 'object') {
+        setOverrides(s.keybindings as KeybindingOverrides);
+      }
+    }).catch(() => {});
+    return onLoomEvent('loom:setting-change', ({ key, value }) => {
+      if (key === 'keybindings' && value && typeof value === 'object') {
+        setOverrides(value as KeybindingOverrides);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const resolved = resolveKeybindings(overrides);
+
     const onKey = (e: KeyboardEvent) => {
-      // Skip during IME composition
       if (e.isComposing || (e as any).keyCode === 229) return;
 
-      const ctrl = e.ctrlKey || e.metaKey;
-      const key = e.key.toLowerCase();
+      const target = e.target as HTMLElement | null;
+      const inInput = !!target && (
+        target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable === true
+      );
 
-      // File operations
-      if (ctrl && !e.shiftKey && !e.altKey && key === 's') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:format-and-save', { detail: { all: false } })); return; }
-      if (ctrl && e.shiftKey && key === 's') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:format-and-save', { detail: { all: true } })); return; }
-      if (ctrl && !e.shiftKey && key === 'n') { e.preventDefault(); actions.createUntitledFile(); return; }
-      if (ctrl && !e.shiftKey && key === 'w') { e.preventDefault(); if (state.openFilesCount) actions.closeTab(state.activeIdx); return; }
-      if (ctrl && !e.shiftKey && key === 'o') { e.preventDefault(); actions.openFileFromDisk(); return; }
-      if (ctrl && e.shiftKey && key === 'o') { e.preventDefault(); actions.openFolder(); return; }
-      // Quick Open (Ctrl+P) — always opens (never toggles) the command palette.
-      if (ctrl && !e.shiftKey && key === 'p') { e.preventDefault(); actions.setCmdPalette(() => true); return; }
-      if (ctrl && e.shiftKey && key === 'p') { e.preventDefault(); actions.setCmdPalette(p => !p); return; }
-      if (ctrl && e.shiftKey && key === 'e') { e.preventDefault(); actions.setSidebarView('explorer'); return; }
-      if (ctrl && e.shiftKey && key === 'f') { e.preventDefault(); actions.setSidebarView('search'); return; }
-      if (ctrl && e.shiftKey && key === 'g') { e.preventDefault(); actions.setSidebarView('git'); return; }
-      if (ctrl && e.shiftKey && key === 'x') { e.preventDefault(); actions.setSidebarView('extensions'); return; }
-      if (ctrl && key === 'b') { e.preventDefault(); actions.setSidebarView(v => v ? '' : 'explorer'); return; }
-      if (ctrl && key === '`') { e.preventDefault(); actions.setPanelVisible(p => !p); return; }
-      if (ctrl && key === '\\') { e.preventDefault(); actions.setSplitMode(p => !p); return; }
-      if (ctrl && key === ',') { e.preventDefault(); actions.setSettingsOpen(true); return; }
+      const id = matchKeybinding(e, resolved);
+      if (!id) return;
+      if (inInput && !INPUT_SAFE_IDS.has(id)) return;
 
-      // Editor actions dispatched to active editor
-      if (e.altKey && key === 'z') {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent('loom:setting-change', { detail: { key: 'editor.wordWrap', value: 'toggle' } }));
-        return;
-      }
-      if (!ctrl && !e.altKey && key === 'f12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'goToDefinition' } })); return; }
-      if (e.altKey && key === 'f12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'peekDefinition' } })); return; }
-      if (e.shiftKey && key === 'f12') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'findReferences' } })); return; }
-      if (!ctrl && !e.altKey && !e.shiftKey && key === 'f2') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'rename' } })); return; }
-      if (e.shiftKey && e.altKey && key === 'f') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })); return; }
-      if (ctrl && key === '/') { e.preventDefault(); window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })); return; }
-
-      // Debugger
-      if (!ctrl && !e.altKey && !e.shiftKey && key === 'f5') { e.preventDefault(); if (state.isDebugging) actions.addOutput(t('app.debugContinue')); else actions.startDebug(); return; }
-      if (e.shiftKey && !ctrl && !e.altKey && key === 'f5') { e.preventDefault(); actions.stopDebug(); return; }
-      if (ctrl && e.shiftKey && key === 'f5') { e.preventDefault(); actions.stopDebug(); setTimeout(() => actions.startDebug(), 100); return; }
-      if (ctrl && !e.shiftKey && !e.altKey && key === 'f5') { e.preventDefault(); actions.runCurrentFile(); return; }
+      e.preventDefault();
+      dispatchAction(id, actions, state);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [actions, state]);
+  }, [actions, state, overrides]);
 }
+
+export { resolveKeybindings };
+export type { KeybindingId, KeybindingOverrides };

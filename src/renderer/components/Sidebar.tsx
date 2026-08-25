@@ -31,7 +31,7 @@ function Sidebar({ view, workspacePath, onOpenFile, onOpenFolder, onCloseFolder,
         <>
           <div className="sidebar-header"><span>{locale === 'zh-CN' ? '代码大纲' : 'OUTLINE'}</span></div>
           <div className="sidebar-content">
-            <OutlineView filePath={selectedFile} onOpenFile={onOpenFile} locale={locale} />
+            <OutlineView filePath={selectedFile} onOpenFile={onOpenFile} locale={locale} workspacePath={workspacePath} />
           </div>
         </>
       )}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import FileTree from './FileTree';
 import { t } from '@/shared/i18n';
+import { emitLoomEvent } from '../loom-events';
 
 export default function SidebarExplorerView({ workspacePath, onOpenFile, onOpenFolder, onCloseFolder, selectedFile, gitStatusMap, locale }: {
   workspacePath: string; onOpenFile: (path: string, content: string) => void; onOpenFolder: () => void; onCloseFolder: () => void; selectedFile: string; gitStatusMap?: Record<string, string>; locale?: 'zh-CN' | 'en-US';
@@ -19,9 +20,9 @@ export default function SidebarExplorerView({ workspacePath, onOpenFile, onOpenF
       } else if (creating === 'folder') {
         await window.loom.fs.mkdir(fullPath);
       }
-      window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
+      emitLoomEvent('loom:refresh-tree', undefined);
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message: `${t('sidebar.createFailed')}: ${e.message}`, type: 'error' } }));
+      emitLoomEvent('loom:notify', { message: `${t('sidebar.createFailed')}: ${e.message}`, type: 'error' });
     }
     setCreating(null);
     setNewName('');
@@ -42,7 +43,7 @@ export default function SidebarExplorerView({ workspacePath, onOpenFile, onOpenF
           <button className="sidebar-header-btn" title={t('sidebar.newFolder')} aria-label={t('sidebar.newFolder')} onClick={() => { setCreating('folder'); setNewName(''); }}>
             <svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 3a1 1 0 011-1h3.146a.5.5 0 01.354.146L6.707 3.354a.5.5 0 00.354.146H14a1 1 0 011 1v8a1 1 0 01-1 1H2a1 1 0 01-1-1V3z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
           </button>
-          <button className="sidebar-header-btn" title={t('sidebar.refresh')} aria-label={t('sidebar.refresh')} onClick={() => window.dispatchEvent(new CustomEvent('loom:refresh-tree'))}>
+          <button className="sidebar-header-btn" title={t('sidebar.refresh')} aria-label={t('sidebar.refresh')} onClick={() => emitLoomEvent('loom:refresh-tree', undefined)}>
             <svg viewBox="0 0 16 16" width="16" height="16"><path d="M13 8a5 5 0 01-9.33 2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M3 8a5 5 0 019.33-2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M11 4l2 2-2 2" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M5 12L3 10l2-2" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
           </button>
           <button className="sidebar-header-btn" title={t('sidebar.openFolder')} aria-label={t('sidebar.openFolder')} onClick={onOpenFolder}>

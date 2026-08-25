@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { confirmDialog } from './ConfirmModal';
 import { t } from '@/shared/i18n';
+import { emitLoomEvent } from '../loom-events';
 
 export default function SidebarSearchView({ workspacePath, onOpenFile, locale }: {
   workspacePath: string; onOpenFile: (path: string, content: string) => void; locale?: 'zh-CN' | 'en-US';
@@ -137,11 +138,9 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
       } catch { failedCount++; }
     }
     setReplacing(false);
-    window.dispatchEvent(new CustomEvent('loom:notify', {
-      detail: { message: t('search.replacedSummary', { done: replacedCount }) + (failedCount > 0 ? t('search.replacedFailSuffix', { failed: failedCount }) : ''),
-        type: failedCount > 0 ? 'warn' : 'success' }
-    }));
-    if (replacedCount > 0) window.dispatchEvent(new CustomEvent('loom:refresh-tree'));
+    emitLoomEvent('loom:notify', { message: t('search.replacedSummary', { done: replacedCount }) + (failedCount > 0 ? t('search.replacedFailSuffix', { failed: failedCount }) : ''),
+        type: failedCount > 0 ? 'warning' : 'success' });
+    if (replacedCount > 0) emitLoomEvent('loom:refresh-tree', undefined);
   }, [query, replaceQuery, results, totalMatches, workspacePath, caseSensitive, wholeWord, useRegex, locale]);
 
   const highlightMatches = (text: string, matches: number[], q: string) => {
@@ -267,7 +266,7 @@ export default function SidebarSearchView({ workspacePath, onOpenFile, locale }:
                       const content = await window.loom.fs.readFile(r.file);
                       onOpenFile(r.file, content);
                       // Navigate to line after a short delay
-                      setTimeout(() => window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line: l.num } })), 200);
+                      setTimeout(() => emitLoomEvent('loom:go-to-line', { line: l.num }), 200);
                     }}>
                       <span className="search-result-line-num">{l.num}</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{highlightMatches(l.text.substring(0, 120), l.matches.map(m => m), query)}</span>

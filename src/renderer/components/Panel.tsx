@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Terminal from './Terminal';
 import DebugPanel from './DebugPanel';
+import DebugControls from './DebugControls';
 import { getLoom } from '../loom-ipc';
+import { t } from '@/shared/i18n';
+import { emitLoomEvent, onLoomEvent } from '../loom-events';
 
 interface Props {
   visible: boolean;
@@ -157,19 +160,16 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
   }, [debugHistory]);
 
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const tabName = e.detail;
+    return onLoomEvent('loom:open-panel-tab', (tabName) => {
       if (tabName && ['problems', 'output', 'terminal', 'debug'].includes(tabName)) {
         setActiveTab(tabName);
         if (!visible) onResize(240);
       }
-    };
-    window.addEventListener('loom:open-panel-tab' as any, handler);
-    return () => window.removeEventListener('loom:open-panel-tab' as any, handler);
+    });
   }, [visible, onResize]);
 
   const handleClear = () => {
-    window.dispatchEvent(new CustomEvent('loom:clear-output'));
+    emitLoomEvent('loom:clear-output', undefined);
   };
 
   const handleMaximize = () => {
@@ -230,7 +230,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                 <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 4.5h-1.5v4h1.5v-4zm0 5h-1.5v1.5h1.5V10.5z" />
               </svg>
-              PROBLEMS
+              {t('panel.problems').toUpperCase()}
             </span>
             {(errorCount > 0 || warnCount > 0) && (
               <span style={{ display: 'inline-flex', gap: 3, marginLeft: 6 }}>
@@ -244,7 +244,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                 <path d="M2 2h12v12H2V2zm1 1v10h10V3H3z" />
               </svg>
-              OUTPUT
+              {t('panel.output').toUpperCase()}
             </span>
           </div>
           <div className={`panel-tab ${activeTab === 'terminal' ? 'active' : ''}`} onClick={() => setActiveTab('terminal')}>
@@ -252,7 +252,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                 <path d="M2 3h12v10H2V3zm1 1v8h10V4H3z" />
               </svg>
-              TERMINAL
+              {t('panel.terminal').toUpperCase()}
             </span>
             {termCount > 1 && <span style={{ fontSize: 10, marginLeft: 4, color: 'var(--text-muted)' }}>({termCount})</span>}
           </div>
@@ -261,7 +261,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <path d="M5.5 2L2 5.5 5.5 9M10.5 2L14 5.5 10.5 9M2 12h12" />
               </svg>
-              DEBUG CONSOLE
+              {t('panel.expressionConsole').toUpperCase()}
             </span>
           </div>
           <div className={`panel-tab ${activeTab === 'runtime' ? 'active' : ''}`} onClick={() => setActiveTab('runtime')}>
@@ -270,27 +270,20 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
                 <rect x="2" y="2" width="12" height="12" rx="1.5" />
                 <path d="M5 8l2 2 4-4" />
               </svg>
-              RUNTIME STATE
+              {t('panel.runtimeState').toUpperCase()}
             </span>
           </div>
         </div>
         <div className="panel-actions">
           {activeTab === 'terminal' && (
-            <>
-              <button className="panel-action-btn" title="New Terminal" aria-label="New Terminal" onClick={() => {
-                const newId = `term-${Date.now()}`;
-                termIdsRef.current = [...termIdsRef.current, newId];
-                setTermCount(c => c + 1);
-                setActiveTerm(termCount);
-              }}>
-                <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 1v6M5 4l3-3 3 3" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.2"/></svg>
-              </button>
-              {termCount > 1 && (
-                <button className="panel-action-btn" title="Split Terminal" aria-label="Split Terminal" onClick={() => setTermCount(c => c + 1)}>
-                  <svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="2" width="14" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1"/><line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" strokeWidth="1"/></svg>
-                </button>
-              )}
-            </>
+            <button className="panel-action-btn" title={t('panel.newTerminal')} aria-label={t('panel.newTerminal')} onClick={() => {
+              const newId = `term-${Date.now()}`;
+              termIdsRef.current = [...termIdsRef.current, newId];
+              setTermCount(c => c + 1);
+              setActiveTerm(termCount);
+            }}>
+              <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 1v6M5 4l3-3 3 3" fill="none" stroke="currentColor" strokeWidth="1.2"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.2"/></svg>
+            </button>
           )}
           {activeTab === 'output' && (
             <button
@@ -302,13 +295,13 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 2v8M5 7l3 3 3-3M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
             </button>
           )}
-          <button className="panel-action-btn" title="Clear" aria-label="Clear" onClick={handleClear}>
+          <button className="panel-action-btn" title={t('panel.clear')} aria-label={t('panel.clear')} onClick={handleClear}>
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 3l10 10" stroke="currentColor" strokeWidth="1.2"/><path d="M13 3L3 13" stroke="currentColor" strokeWidth="1.2"/></svg>
           </button>
-          <button className="panel-action-btn" title="Maximize Panel" aria-label="Maximize Panel" onClick={handleMaximize}>
+          <button className="panel-action-btn" title={t('panel.maximizePanel')} aria-label={t('panel.maximizePanel')} onClick={handleMaximize}>
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 3h4v1H4v3H3V3zm6 0h4v4h-1V4H9V3zM3 9h1v3h3v1H3V9zm9 0h1v4h-4v-1h3V9z" fill="currentColor"/></svg>
           </button>
-          <button className="panel-action-btn" title="Close Panel" aria-label="Close Panel" onClick={onClose}>
+          <button className="panel-action-btn" title={t('panel.closePanel')} aria-label={t('panel.closePanel')} onClick={onClose}>
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 3l10 10" stroke="currentColor" strokeWidth="1.2"/><path d="M13 3L3 13" stroke="currentColor" strokeWidth="1.2"/></svg>
           </button>
         </div>
@@ -360,7 +353,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
             {problems.length === 0 ? (
               <div className="panel-empty-state">
                 <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--green)' }}><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm3.78 5.22l-4.5 5.5a.75.75 0 01-1.12.02l-2-2a.75.75 0 111.06-1.06l1.42 1.42 3.96-4.86a.75.75 0 011.18.98z" fill="currentColor"/></svg>
-                <div>No problems detected</div>
+                <div>{t('panel.noProblems')}</div>
               </div>
             ) : (
               problems.map((p, i) => (
@@ -387,7 +380,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
             {outputLines.length === 0 ? (
               <div className="panel-empty-state">
                 <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)' }}><path d="M14 3H2l-.5.5v9l.5.5h12l.5-.5v-9L14 3zm-.5 9h-11v-8h11v8z" fill="currentColor"/></svg>
-                <div>No output yet</div>
+                <div>{t('panel.noOutput')}</div>
               </div>
             ) : (
               outputLines.map((line, i) => <div key={i} style={{ lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{line}</div>)
@@ -402,12 +395,13 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
         )}
 
         {activeTab === 'debug' && (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            <DebugControls />
             <div style={{ flex: 1, overflow: 'auto', padding: '4px 8px', fontFamily: "'Cascadia Code', Consolas, monospace", fontSize: 12 }}>
               {debugHistory.length === 0 ? (
                 <div className="panel-empty-state">
                   <svg viewBox="0 0 16 16" width="24" height="24" style={{ color: 'var(--text-muted)' }}><path d="M5.5 2L2 5.5 5.5 9M10.5 2L14 5.5 10.5 9M2 12h12" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
-                  <div>Debug console ready. Type expressions below.</div>
+                  <div>{t('panel.expressionReady')}</div>
                 </div>
               ) : (
                 debugHistory.map((line, i) => (
@@ -422,7 +416,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
               <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 12, flexShrink: 0 }}>›</span>
               <input
                 style={{ flex: 1, height: 24, fontSize: 12, fontFamily: "'Cascadia Code', Consolas, monospace", background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none' }}
-                placeholder="Evaluate expression..."
+                placeholder={t('panel.expressionPlaceholder')}
                 value={debugInput}
                 onChange={e => setDebugInput(e.target.value)}
                 onKeyDown={e => {

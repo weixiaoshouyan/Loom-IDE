@@ -11,7 +11,6 @@
 import { ipcMain, shell, type WebContents } from 'electron';
 import {
   parseDevelopmentCommand,
-  runDevelopmentCommand,
   runDevelopmentCommandStreaming,
 } from '../agent/development-command';
 
@@ -52,36 +51,10 @@ export function registerShellHandlers() {
     return shell.openExternal(url);
   });
 
-  ipcMain.handle('verification:run-command', async (_e: any, workspacePath: string, commandLine: string) => {
-    // SECURITY: only run commands inside workspaces the user has actually opened.
-    if (!_pathPerms?.hasGrants() || !_pathPerms?.canAccess(workspacePath)) {
-      return {
-        command: commandLine,
-        exitCode: null,
-        stdout: '',
-        stderr: 'Refusing to run: workspace is not an authorized/opened folder.',
-      };
-    }
-    const parsed = parseDevelopmentCommand(String(commandLine || ''));
-    if (parsed.error || !parsed.command) {
-      return {
-        command: commandLine,
-        exitCode: null,
-        stdout: '',
-        stderr: parsed.error || 'Command is required.',
-      };
-    }
-    return {
-      command: commandLine,
-      ...runDevelopmentCommand({
-        command: parsed.command,
-        args: parsed.args || [],
-        cwd: workspacePath,
-        workspacePath,
-        timeoutMs: 120000,
-      }),
-    };
-  });
+  // NOTE: the old synchronous `verification:run-command` handler was removed —
+  // it ran `spawnSync` in the main process and could freeze the whole UI for up
+  // to 120s. Nothing in the renderer used it (all callers go through the
+  // streaming channel below). Use `verification:run-command-stream` instead.
 
   // Streaming run — the "Run (no debug)" path. Fire-and-forget send channel;
   // all output/exit events come back over `verification:run-event`.

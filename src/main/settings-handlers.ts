@@ -8,6 +8,7 @@ import { ipcMain, app } from 'electron';
 import path from 'path';
 import { loadConfig, saveConfig, maskConfig, API_KEY_MASK } from './config';
 import { ensurePathAllowed } from './path-permissions';
+import { isTrustedSender } from './ipc-guard';
 import { buildCodeIndex, loadCodeIndex, saveCodeIndex, searchCodeIndex, CodeIndex } from '../agent/code-index';
 
 // Module-level cache (moved out of index.ts monolith).
@@ -29,7 +30,11 @@ export function registerSettingsHandlers() {
   // ai:getConfig does (see maskConfig in config.ts).
   ipcMain.handle('settings:getAll', () => maskConfig(loadConfig()));
 
-  ipcMain.handle('settings:set', (_e: any, key: string, value: any) => {
+  ipcMain.handle('settings:set', (e: any, key: string, value: any) => {
+    // SECURITY: only the main window's top-level frame may write settings —
+    // plugin webviews/subframes must not be able to weaken agent policy or
+    // overwrite provider keys through the generic setter.
+    if (!isTrustedSender(e)) return { ok: false, error: 'unauthorized' };
     // SECURITY: reject prototype-pollution keys — a crafted key like
     // "__proto__.x" or "constructor.prototype.x" would otherwise mutate the
     // main process's Object prototype.
@@ -54,7 +59,9 @@ export function registerSettingsHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle('settings:setAll', (_e: any, newCfg: any) => {
+  ipcMain.handle('settings:setAll', (e: any, newCfg: any) => {
+    // SECURITY: same trusted-sender rule as settings:set.
+    if (!isTrustedSender(e)) return { ok: false, error: 'unauthorized' };
     // SECURITY: the renderer round-trips the masked config it got from
     // settings:getAll — never let the placeholder overwrite real keys.
     if (newCfg && Array.isArray(newCfg.aiConfig?.providers)) {
@@ -86,6 +93,25 @@ export function registerCodeIndexHandlers() {
       }
     }
     return searchCodeIndex(codeIndex, query, topK || 10);
+  });
+
+  // Outline 视图：返回单个文件的全部符号（复用 tree-sitter 索引缓存，
+  // 替代渲染层正则扫描；未索引语言由渲染层降级为正则）。
+  ipcMain.handle('code-index:file-symbols', async (_e: any, workspacePath: string, filePath: string) => {
+    if (!ensurePathAllowedSafe(workspacePath)) throw new Error(`Path not allowed: ${workspacePath}`);
+    if (!codeIndex || codeIndex.workspacePath !== workspacePath) {
+      const cached = loadCodeIndex(getIndexDir(workspacePath));
+      if (cached && cached.workspacePath === workspacePath) {
+        codeIndex = cached;
+      } else {
+        codeIndex = await buildAndCacheCodeIndex(workspacePath);
+      }
+    }
+    const normTarget = filePath.replace(/\\/g, '/');
+    return codeIndex.symbols
+      .filter(s => s.filePath.replace(/\\/g, '/') === normTarget)
+      .map(s => ({ name: s.name, kind: s.kind, line: s.startLine, endLine: s.endLine }))
+      .sort((a, b) => a.line - b.line);
   });
 
   // Idle-time background prebuild (avoids blocking the first @-search).

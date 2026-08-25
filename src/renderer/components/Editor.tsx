@@ -19,6 +19,7 @@ import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 // @ts-expect-error Vite ?worker suffix not in Monaco's type declarations
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import { emitLoomEvent, onLoomEvent } from '../loom-events';
 
 // 归一化行尾为 LF，用于比较内容时忽略 Windows CRLF 与 LF 的差异（见 attachFileModel）。
 function normalizeEOL(s: string): string {
@@ -140,8 +141,16 @@ function registerAICompletionProvider() {
         const lang = model.getLanguageId();
         const fileName = model.uri.fsPath.split(/[\\/]/).pop() || '';
 
-        const prompt = `Complete the following code. Only return the completion text. Do NOT include the existing code. Language: ${lang}. File: ${fileName}
+        // 文件级上下文：文件头（imports/声明）帮助模型保持风格一致
+        const fileHead = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: Math.min(15, position.lineNumber - 1),
+          endColumn: model.getLineMaxColumn(Math.min(15, position.lineNumber - 1)),
+        }).trim();
 
+        const prompt = `Complete the following code. Only return the completion text. Do NOT include the existing code. Language: ${lang}. File: ${fileName}
+${fileHead ? `\nFile header:\n${fileHead.slice(0, 1500)}\n` : ''}
 <code>
 ${textBeforeCursor.trimEnd()}█${textAfterCursor.trimStart()}
 </code>
@@ -178,11 +187,17 @@ Return ONLY the completion, no explanation.`;
             .replace(/```$/g, '')
             .trim();
 
-          if (!completion || completion.length > 200) return { items: [] };
+          // 多行函数补全放宽到 400 字符（原 200 上限让多行补全几乎不可能）；
+          // 仍做基本的括号平衡校验，不平衡时截断到最后一个平衡点。
+          if (!completion) return { items: [] };
+          const trimmed = completion.length > 400 ? completion.slice(0, 400) : completion;
+          const open = (trimmed.match(/\{/g) || []).length;
+          const close = (trimmed.match(/\}/g) || []).length;
+          const balanced = open <= close;
 
           return {
             items: [{
-              insertText: completion,
+              insertText: balanced ? trimmed : trimmed.split('\n')[0],
               range: { startLineNumber: position.lineNumber, startColumn: position.column, endLineNumber: position.lineNumber, endColumn: position.column },
             }],
           };
@@ -356,6 +371,23 @@ function normalizeModelPath(filePath: string): string {
   }
 }
 
+/** 断点装饰缓存：model uri → 已应用的 decoration ids。 */
+const breakpointDecorationsStore = new Map<string, string[]>();
+
+/** 按断点行号集合渲染 glyph margin 断点圆点。 */
+function renderBreakpointDecorations(editor: monaco.editor.IStandaloneCodeEditor, fsPath: string, lines: Set<number>): void {
+  const decorations = Array.from(lines).map(line => ({
+    range: new monaco.Range(line, 1, line, 1),
+    options: {
+      glyphMarginClassName: 'loom-breakpoint',
+      stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+  }));
+  const prev = breakpointDecorationsStore.get(fsPath) || [];
+  const next = editor.deltaDecorations(prev, decorations);
+  breakpointDecorationsStore.set(fsPath, next);
+}
+
 // Find/Replace bar
 // Lightweight built-in formatter. Used when Monaco has no provider for the
 // language. Handles JSON (full reformat) and a few common cases. Anything
@@ -377,7 +409,7 @@ function formatFallback(lang: string, value: string): string {
   return out;
 }
 
-export default function Editor({ file, openFilePaths, onContentChange, workspacePath: wsPath }: Props) {
+function Editor({ file, openFilePaths, onContentChange, workspacePath: wsPath }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -387,8 +419,12 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
   const fileRef = useRef(file);
   const [showFind, setShowFind] = useState(false);
   const [showInlineAI, setShowInlineAI] = useState(false);
+  const [editorCtxMenu, setEditorCtxMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null);
   const [workspacePath, setWorkspacePath] = useState('');
   const [locale, setLocale] = useState<'zh-CN' | 'en-US'>('zh-CN');
+  // 断点集合：文件路径 → 断点行号集合（gutter 点击切换）
+  const breakpointsRef = useRef<Map<string, Set<number>>>(new Map());
+  const breakpointDecorationsRef = useRef<Map<string, string[]>>(new Map());
   const settingsRef = useRef<{ formatOnSave: boolean; autoSave: 'off' | 'afterDelay'; autoSaveDelay: number }>({ formatOnSave: false, autoSave: 'off', autoSaveDelay: 1000 });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 跟踪每个文件 model.onDidChangeContent 返回的 disposable，模型 dispose 时一并释放，
@@ -427,7 +463,7 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         if (settingsRef.current.autoSave === 'afterDelay' && !targetFile.path.startsWith('untitled-')) {
           autoSaveTimerRef.current = setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('loom:save-file', { detail: { all: false } }));
+            emitLoomEvent('loom:save-file', { all: false });
           }, settingsRef.current.autoSaveDelay);
         }
       });
@@ -447,6 +483,8 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
       editor.focus();
     });
     prevPathRef.current = targetFile.path;
+    // 通知状态栏真实的行尾符（EOL）信息，避免状态栏显示与模型脱节
+    emitLoomEvent('loom:editor-state', { path: targetFile.path, eol: model.getEOL() === '\r\n' ? 'CRLF' : 'LF' },);
   }, []);
 
   const disposeEditor = useCallback(() => {
@@ -511,7 +549,38 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
       suggest: { showInlineDetails: true },
     });
     editor.onDidChangeCursorPosition((e) => {
-      window.dispatchEvent(new CustomEvent('loom:cursor-change', { detail: { line: e.position.lineNumber, column: e.position.column } }));
+      emitLoomEvent('loom:cursor-change', { line: e.position.lineNumber, column: e.position.column });
+    });
+    // 断点 gutter：点击行号左侧空白处切换断点（Node/TS 调试）
+    editor.onMouseDown((e) => {
+      if (e.target?.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+      const line = e.target.position?.lineNumber;
+      const model = editor.getModel();
+      if (!model || !line) return;
+      const fileUrl = monaco.Uri.file(model.uri.fsPath).toString();
+      const existing = breakpointsRef.current.get(model.uri.fsPath) || new Set<number>();
+      if (existing.has(line)) {
+        existing.delete(line);
+        window.loom?.debug?.setBreakpoint?.(fileUrl, -1); // -1 表示移除断点
+      } else {
+        existing.add(line);
+        window.loom?.debug?.setBreakpoint?.(fileUrl, line);
+      }
+      breakpointsRef.current.set(model.uri.fsPath, existing);
+      renderBreakpointDecorations(editor, model.uri.fsPath, existing);
+      e.event.preventDefault();
+    });
+    // IDE 级自定义右键菜单（替代 Monaco 默认菜单）：叠加文件操作 + 常用命令
+    editor.onContextMenu((e) => {
+      e.event.preventDefault();
+      e.event.stopPropagation();
+      const file = fileRef.current;
+      setEditorCtxMenu({
+        x: e.event.browserEvent.clientX,
+        y: e.event.browserEvent.clientY,
+        path: file?.path || '',
+        name: file?.name || '',
+      });
     });
     editorRef.current = editor;
     attachFileModel(editor, fileRef.current);
@@ -556,48 +625,40 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
         };
       }
     }).catch(() => {});
-    const handler = (e: CustomEvent) => {
-      if (e.detail?.key === 'locale') setLocale(e.detail.value);
-      if (e.detail?.key === 'editor.formatOnSave') settingsRef.current.formatOnSave = !!e.detail.value;
-      if (e.detail?.key === 'editor.autoSave') settingsRef.current.autoSave = e.detail.value === 'afterDelay' ? 'afterDelay' : 'off';
-      if (e.detail?.key === 'editor.autoSaveDelay') settingsRef.current.autoSaveDelay = Number(e.detail.value) || 1000;
-    };
-    window.addEventListener('loom:setting-change' as any, handler);
-    return () => window.removeEventListener('loom:setting-change' as any, handler);
+    return onLoomEvent('loom:setting-change', ({ key, value }) => {
+      if (key === 'locale') setLocale(value as 'zh-CN' | 'en-US');
+      if (key === 'editor.formatOnSave') settingsRef.current.formatOnSave = !!value;
+      if (key === 'editor.autoSave') settingsRef.current.autoSave = value === 'afterDelay' ? 'afterDelay' : 'off';
+      if (key === 'editor.autoSaveDelay') settingsRef.current.autoSaveDelay = Number(value) || 1000;
+    });
   }, []);
 
   // Listen for settings changes
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const { key, value } = e.detail;
+    return onLoomEvent('loom:setting-change', ({ key, value }) => {
       if (!editorRef.current) return;
       if (key === 'editor.wordWrap') {
         editorRef.current.updateOptions({ wordWrap: value === 'on' ? 'on' : (value === 'toggle' ? (editorRef.current.getOption(monaco.editor.EditorOption.wordWrap) === 'on' ? 'off' : 'on') : 'off') });
       }
-      if (key === 'editor.minimap') editorRef.current.updateOptions({ minimap: { enabled: value } });
-      if (key === 'editor.fontSize') editorRef.current.updateOptions({ fontSize: value });
+      if (key === 'editor.minimap') editorRef.current.updateOptions({ minimap: { enabled: value as boolean } });
+      if (key === 'editor.fontSize') editorRef.current.updateOptions({ fontSize: value as number });
       if (key === 'editor.lineNumbers') editorRef.current.updateOptions({ lineNumbers: value ? 'on' : 'off' });
-      if (key === 'editor.tabSize') editorRef.current.updateOptions({ tabSize: value });
+      if (key === 'editor.tabSize') editorRef.current.updateOptions({ tabSize: value as number });
       if (key === 'theme') {
-        monaco.editor.setTheme(resolveMonacoTheme(value, window.matchMedia('(prefers-color-scheme: dark)').matches));
+        monaco.editor.setTheme(resolveMonacoTheme(value as string, window.matchMedia('(prefers-color-scheme: dark)').matches));
       }
-    };
-    window.addEventListener('loom:setting-change' as any, handler);
-    return () => window.removeEventListener('loom:setting-change' as any, handler);
+    });
   }, []);
 
   // Listen for go-to-line events
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const { line } = e.detail;
+    return onLoomEvent('loom:go-to-line', ({ line }) => {
       const ed = editorRef.current;
       if (!ed || !line) return;
       ed.revealLineInCenter(line);
       ed.setPosition({ lineNumber: line, column: 1 });
       ed.focus();
-    };
-    window.addEventListener('loom:go-to-line' as any, handler);
-    return () => window.removeEventListener('loom:go-to-line' as any, handler);
+    });
   }, []);
 
   // Helper to format the current editor document
@@ -621,8 +682,7 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
 
   // Listen for editor actions
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const { action } = e.detail;
+    return onLoomEvent('loom:editor-action', ({ action }) => {
       const ed = editorRef.current;
       if (!ed) return;
       const tryAction = (id: string) => {
@@ -643,26 +703,30 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
       else if (action === 'toggleBlockComment') ed.getAction('editor.action.blockComment')?.run();
       else if (action === 'inlineAI') { if (ed.hasTextFocus()) setShowInlineAI(p => !p); }
       else if (action === 'find' || action === 'replace') { if (ed.hasTextFocus()) setShowFind(true); }
-    };
-    window.addEventListener('loom:editor-action' as any, handler);
-    return () => window.removeEventListener('loom:editor-action' as any, handler);
+      else if (action === 'toggleEOL') {
+        const m = ed.getModel();
+        if (m) {
+          // setEOL 会触发 onDidChangeContent → 内容标记为已修改（与 VS Code 行为一致）
+          m.setEOL(m.getEOL() === '\r\n' ? monaco.editor.EndOfLineSequence.LF : monaco.editor.EndOfLineSequence.CRLF);
+          emitLoomEvent('loom:editor-state', { path: m.uri.fsPath, eol: m.getEOL() === '\r\n' ? 'CRLF' : 'LF' });
+        }
+      }
+    });
   }, [formatCurrentDocument]);
 
   // Format on save: editor handles formatting, then asks App to save
   useEffect(() => {
-    const handler = async (e: CustomEvent) => {
-      if (e.detail?.all) {
+    return onLoomEvent('loom:format-and-save', async ({ all }) => {
+      if (all) {
         // Save all without per-file formatting for now (multi-file formatting needs model switching)
-        window.dispatchEvent(new CustomEvent('loom:save-file', { detail: { all: true } }));
+        emitLoomEvent('loom:save-file', { all: true });
         return;
       }
       if (settingsRef.current.formatOnSave) {
         await formatCurrentDocument();
       }
-      window.dispatchEvent(new CustomEvent('loom:save-file', { detail: { all: false } }));
-    };
-    window.addEventListener('loom:format-and-save' as any, handler);
-    return () => window.removeEventListener('loom:format-and-save' as any, handler);
+      emitLoomEvent('loom:save-file', { all: false });
+    });
   }, [formatCurrentDocument]);
 
   // Create Monaco only after the container has real dimensions. If Monaco gets
@@ -712,9 +776,22 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
           problems.push({ severity, message: m.message, file: uri.fsPath, line: m.startLineNumber });
         }
       }
-      window.dispatchEvent(new CustomEvent('loom:diagnostics', { detail: problems }));
+      emitLoomEvent('loom:diagnostics', problems);
     });
     return () => disposable.dispose();
+  }, []);
+
+  // 外部（AI 面板接受编辑 / 恢复历史）强制更新当前模型内容：React.memo 的
+  // 比较器忽略 content 变化（输入过程中的按键不应触发组件重渲染），所以外部
+  // 修改必须显式驱动模型。模型 setValue 会触发 onDidChangeContent → 内容同步。
+  useEffect(() => {
+    return onLoomEvent('loom:editor-set-content', ({ path: targetPath, content }) => {
+      const ed = editorRef.current;
+      const model = ed?.getModel();
+      if (!ed || !model || typeof targetPath !== 'string' || typeof content !== 'string') return;
+      if (normalizeModelPath(targetPath) !== model.uri.fsPath) return;
+      if (model.getValue() !== content) model.setValue(content);
+    });
   }, []);
 
   // Switch model when file changes
@@ -752,20 +829,86 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
   }, []);
 
+  // 编辑器右键菜单：IDE 级操作（VS Code 风格），通过已有事件通道驱动
+  const runEditorMenuAction = useCallback((action: string) => {
+    const ed = editorRef.current;
+    if (ed) {
+      const tryAction = (id: string) => {
+        const a = ed.getAction(id);
+        if (a) { a.run(); return true; }
+        return false;
+      };
+      if (action === 'goToDefinition') tryAction('editor.action.revealDefinition');
+      else if (action === 'rename') tryAction('editor.action.rename');
+      else if (action === 'format') formatCurrentDocument();
+      else if (action === 'findReferences') tryAction('editor.action.referenceSearch.trigger');
+    }
+    setEditorCtxMenu(null);
+  }, [formatCurrentDocument]);
+
   return (
     <>
       {showFind && <FindReplaceBar editor={editorRef.current} locale={locale} />}
       {showInlineAI && <InlineAIEdit editorRef={editorRef} workspacePath={workspacePath} onClose={() => setShowInlineAI(false)} />}
+      {editorCtxMenu && (
+        <>
+          <div className="context-menu-overlay" onClick={() => setEditorCtxMenu(null)} />
+          <div className="context-menu" style={{ left: editorCtxMenu.x, top: editorCtxMenu.y }}>
+            <div className="context-menu-item" onClick={() => runEditorMenuAction('goToDefinition')}>
+              <span>{locale === 'zh-CN' ? '转到定义' : 'Go to Definition'}</span>
+              <span className="context-menu-shortcut">F12</span>
+            </div>
+            <div className="context-menu-item" onClick={() => runEditorMenuAction('findReferences')}>
+              <span>{locale === 'zh-CN' ? '查找所有引用' : 'Find All References'}</span>
+              <span className="context-menu-shortcut">Shift+F12</span>
+            </div>
+            <div className="context-menu-item" onClick={() => runEditorMenuAction('rename')}>
+              <span>{locale === 'zh-CN' ? '重命名符号' : 'Rename Symbol'}</span>
+              <span className="context-menu-shortcut">F2</span>
+            </div>
+            <div className="context-menu-item" onClick={() => runEditorMenuAction('format')}>
+              <span>{locale === 'zh-CN' ? '格式化文档' : 'Format Document'}</span>
+              <span className="context-menu-shortcut">Shift+Alt+F</span>
+            </div>
+            <div className="context-menu-sep" />
+            <div className="context-menu-item" onClick={() => {
+              if (editorCtxMenu.path) navigator.clipboard?.writeText(editorCtxMenu.path);
+              setEditorCtxMenu(null);
+            }}>
+              <span>{locale === 'zh-CN' ? '复制路径' : 'Copy Path'}</span>
+            </div>
+            <div className="context-menu-item" onClick={() => {
+              if (editorCtxMenu.path) window.loom?.shell?.showItemInFolder?.(editorCtxMenu.path);
+              setEditorCtxMenu(null);
+            }}>
+              <span>{locale === 'zh-CN' ? '在文件管理器中显示' : 'Reveal in File Explorer'}</span>
+            </div>
+            <div className="context-menu-sep" />
+            <div className="context-menu-item" onClick={() => {
+              emitLoomEvent('loom:revert-file', undefined);
+              setEditorCtxMenu(null);
+            }}>
+              <span>{locale === 'zh-CN' ? '从磁盘重新载入' : 'Revert File from Disk'}</span>
+            </div>
+            <div className="context-menu-item" onClick={() => {
+              emitLoomEvent('loom:open-history', undefined);
+              setEditorCtxMenu(null);
+            }}>
+              <span>{locale === 'zh-CN' ? '查看本地历史' : 'View Local History'}</span>
+            </div>
+          </div>
+        </>
+      )}
       <div className="editor-container" style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 0, flex: 1 }} />
         {!file && (
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-editor)', zIndex: 1, overflow: 'auto' }}>
             <WelcomePage
-              onOpenFile={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFile' }))}
-              onOpenFolder={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openFolder' }))}
-              onOpenFolderPath={(folder) => window.dispatchEvent(new CustomEvent('loom:open-folder-path', { detail: folder }))}
-              onNewFile={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'newFile' }))}
-              onOpenSettings={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'openSettings' }))}
+              onOpenFile={() => emitLoomEvent('loom:cmd', 'openFile')}
+              onOpenFolder={() => emitLoomEvent('loom:cmd', 'openFolder')}
+              onOpenFolderPath={(folder) => emitLoomEvent('loom:open-folder-path', folder)}
+              onNewFile={() => emitLoomEvent('loom:cmd', 'newFile')}
+              onOpenSettings={() => emitLoomEvent('loom:cmd', 'openSettings')}
               locale={locale}
               workspacePath={workspacePath}
             />
@@ -775,3 +918,20 @@ export default function Editor({ file, openFilePaths, onContentChange, workspace
     </>
   );
 }
+
+/**
+ * 性能：每次按键都会 setOpenFiles → file 对象引用变化。比较器忽略 content
+ * 差异（模型是内容的事实源，输入不重建模型），只在文件切换/语言变化/外部
+ * 内容强制同步（loom:editor-set-content）时重渲染组件。
+ */
+function editorPropsEqual(prev: Props, next: Props): boolean {
+  if (prev.openFilePaths !== next.openFilePaths) return false;
+  if (prev.workspacePath !== next.workspacePath) return false;
+  if (prev.onContentChange !== next.onContentChange) return false;
+  const a = prev.file;
+  const b = next.file;
+  if (!a || !b) return a === b;
+  return a.path === b.path && a.name === b.name && a.language === b.language && a.contentTruncated === b.contentTruncated;
+}
+
+export default React.memo(Editor, editorPropsEqual);

@@ -5,7 +5,7 @@
  * installation or direct access. Folder picks always flow through a native
  * dialog in the main process.
  */
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { loadConfig, saveConfig } from './config';
@@ -72,7 +72,10 @@ export function registerDialogHandlers() {
         // TEST-ONLY ESCAPE HATCH: the Playwright e2e suite boots the app with
         // E2E=1 and drives openFolderByPath via window.loom; a native dialog
         // cannot be automated. Never set in production runs.
-        if (process.env.E2E === '1') {
+        // HARDENED: the env-var backdoor now only works in dev/unpackaged
+        // builds (`!app.isPackaged`) — a production binary can never be
+        // silently coerced into auto-granting arbitrary paths.
+        if (process.env.E2E === '1' && !app.isPackaged) {
           grantRoot(realFolder);
           return { ok: true, folder: realFolder };
         }

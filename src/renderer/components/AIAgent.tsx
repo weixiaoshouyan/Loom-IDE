@@ -11,14 +11,6 @@ import {
   rejectReviewItem,
   type AgentReviewItem,
 } from '../agent-review-queue';
-import {
-  approvePlan,
-  cancelTask,
-  createAgentTaskState,
-  failTask,
-  receivePlan,
-  startPlanning,
-} from '../agent-task-state';
 import { buildCodexTerminalInput } from '../assistant-panel';
 import { formatUsage } from '../ai-usage';
 import AgentPlanApproval from './AgentPlanApproval';
@@ -27,63 +19,30 @@ import AgentReviewQueue from './AgentReviewQueue';
 import AgentTaskCenter from './AgentTaskCenter';
 import AgentHistoryPanel from './AgentHistoryPanel';
 import AgentComparePanel from './AgentComparePanel';
+import AgentVerificationPanel from './AgentVerificationPanel';
 import Terminal from './Terminal';
 import { getLoom } from '../loom-ipc';
-import { getLocale } from '@/shared/i18n';
+import { emitLoomEvent, onLoomEvent } from '../loom-events';
+import { useAgentCheckpoint } from '../hooks/useAgentCheckpoint';
+import { useAgentChat } from '../hooks/useAgentChat';
+import { useAgentTask } from '../hooks/useAgentTask';
+import {
+  basename,
+  cleanAssistantDisplayText,
+  compactContext,
+  createReviewId,
+  currentLocale,
+  getLocalizedErrorMessage,
+  loadChatSessions,
+  makeSessionPreview,
+  makeSessionTitle,
+  normalizeChunk,
+  renderTaskEvent,
+  saveChatSessions,
+} from '../agent-format';
 
 // Token 用量 / 成本估算已抽到 ../ai-usage（formatUsage / estimateRates）。
-
-/**
- * Convert raw API error messages into localized, user-friendly messages.
- */
-function getLocalizedErrorMessage(rawMessage: string, locale: 'zh-CN' | 'en-US'): string {
-  const msg = rawMessage.toLowerCase();
-
-  // Image input not supported
-  if (msg.includes('image') && (msg.includes('not support') || msg.includes('unsupported') || msg.includes('cannot read'))) {
-    return locale === 'zh-CN'
-      ? '❌ 当前模型不支持图片输入。请使用支持视觉的模型（如 GPT-4o、Claude 3.5 Sonnet 等），或移除图片后重试。'
-      : '❌ The current model does not support image input. Please use a vision-capable model (e.g., GPT-4o, Claude 3.5 Sonnet) or remove the image and try again.';
-  }
-
-  // API key issues
-  if (msg.includes('api key') && (msg.includes('invalid') || msg.includes('unauthorized') || msg.includes('401'))) {
-    return locale === 'zh-CN'
-      ? '❌ API Key 无效或已过期。请在设置中检查并更新您的 API Key。'
-      : '❌ API Key is invalid or expired. Please check and update your API Key in Settings.';
-  }
-
-  // Rate limiting
-  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('too many requests')) {
-    return locale === 'zh-CN'
-      ? '❌ 请求过于频繁，已触发速率限制。请稍后再试。'
-      : '❌ Too many requests. Rate limit exceeded. Please try again later.';
-  }
-
-  // Network errors
-  if (msg.includes('network') || msg.includes('timeout') || msg.includes('econnrefused') || msg.includes('enotfound')) {
-    return locale === 'zh-CN'
-      ? '❌ 网络连接失败。请检查您的网络连接后重试。'
-      : '❌ Network connection failed. Please check your internet connection and try again.';
-  }
-
-  // Context length exceeded
-  if (msg.includes('context') && (msg.includes('exceed') || msg.includes('too long') || msg.includes('maximum') || msg.includes('token'))) {
-    return locale === 'zh-CN'
-      ? '❌ 输入内容超过了模型的最大上下文长度。请减少输入内容或使用支持更长上下文的模型。'
-      : '❌ Input exceeds the model maximum context length. Please reduce input or use a model with longer context support.';
-  }
-
-  // Model not found
-  if (msg.includes('model') && (msg.includes('not found') || msg.includes('does not exist') || msg.includes('invalid'))) {
-    return locale === 'zh-CN'
-      ? '❌ 模型不存在或无法访问。请在设置中检查模型配置。'
-      : '❌ Model not found or inaccessible. Please check model settings.';
-  }
-
-  // Fallback: return original message
-  return rawMessage;
-}
+// 纯函数（错误文案/会话标题/chunk 归一化/持久化）已抽到 ../agent-format。
 
 interface Props {
   workspacePath: string;
@@ -96,7 +55,7 @@ interface Props {
   locale?: 'zh-CN' | 'en-US';
 }
 
-interface Message {
+export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   toolCalls?: ToolCallDisplay[];
@@ -105,7 +64,7 @@ interface Message {
   requestId?: string;
 }
 
-interface ToolCallDisplay {
+export interface ToolCallDisplay {
   name: string;
   args: unknown;
   status: 'pending' | 'running' | 'done' | 'error';
@@ -120,7 +79,7 @@ interface AgentChunk {
   toolArgs?: unknown;
   taskEvent?: {
     taskId: string;
-    type: 'queued' | 'started' | 'stdout' | 'stderr' | 'exit' | 'error' | 'retry' | 'cancelled';
+    type: 'queued' | 'started' | 'stdout' | 'stderr' | 'exit' | 'error' | 'retry' | 'cancelled' | 'verify-start' | 'verify-done';
     command: string;
     args: string[];
     attempt: number;
@@ -198,74 +157,6 @@ export interface ChatSession {
   messages: Message[];
 }
 
-const CHAT_HISTORY_KEY = 'loom:ai-chat-history';
-
-function normalizeChunk(chunk: unknown): AgentChunk {
-  if (typeof chunk === 'string') return { type: 'text', content: chunk };
-  if (chunk && typeof chunk === 'object') return chunk as AgentChunk;
-  return { type: 'text', content: String(chunk ?? '') };
-}
-
-function compactContext(openFiles: Props['openFiles'], workspaceRules?: string): string {
-  const fileContext = (openFiles || [])
-    .slice(0, 6)
-    .map(file => `File: ${file.path}\n${file.content.slice(0, 12000)}`)
-    .join('\n\n---\n\n');
-  return [
-    workspaceRules ? `Workspace rules:\n${workspaceRules}` : '',
-    fileContext ? `Open files:\n${fileContext}` : '',
-  ].filter(Boolean).join('\n\n');
-}
-
-function basename(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() || filePath;
-}
-
-function createReviewId(filePath: string): string {
-  return filePath.replace(/[\\/:\s]+/g, '-').toLowerCase();
-}
-
-function cleanAssistantDisplayText(content: string): string {
-  return content
-    .replace(/(?:^|\n)\s*(?:Using|Calling) tool:\s*[A-Za-z0-9_-]+\s*/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimStart();
-}
-
-function makeSessionTitle(messages: Message[]): string {
-  const firstUser = messages.find(message => message.role === 'user')?.content || 'New chat';
-  return firstUser.replace(/\s+/g, ' ').trim().slice(0, 48) || 'New chat';
-}
-
-function makeSessionPreview(messages: Message[]): string {
-  const lastAssistant = [...messages].reverse().find(message => message.role === 'assistant')?.content || '';
-  return cleanAssistantDisplayText(lastAssistant).replace(/\s+/g, ' ').trim().slice(0, 96);
-}
-
-function loadChatSessions(): ChatSession[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.slice(0, 40) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveChatSessions(sessions: ChatSession[]) {
-  localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(sessions.slice(0, 40)));
-}
-
-function renderTaskEvent(event: AgentChunk['taskEvent']): string {
-  if (!event) return '';
-  const command = [event.command, ...(event.args || [])].join(' ').trim();
-  if (event.type === 'stdout' || event.type === 'stderr') return event.data || '';
-  if (event.type === 'exit') return `Command finished (${event.exitCode ?? 'unknown'}): ${command}`;
-  if (event.type === 'error') return `Command failed: ${event.error || command}`;
-  if (event.type === 'cancelled') return `Command cancelled: ${command}`;
-  if (event.type === 'retry') return `Command retry queued: ${command}`;
-  return `Command ${event.type}: ${command}`;
-}
-
 function selectedReview(queue: AgentReviewItem[], id: string | null): AgentReviewItem | null {
   return queue.find(item => item.id === id) || queue.find(item => item.status === 'pending') || queue[0] || null;
 }
@@ -325,7 +216,7 @@ function DiffPreview({
   );
 }
 
-export default function AIAgent({
+function AIAgent({
   workspacePath,
   onClose,
   openFiles = [],
@@ -338,9 +229,7 @@ export default function AIAgent({
   const [config, setConfig] = useState<AIConfig | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [cliAgents, setCliAgents] = useState<CliAgentInfo[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState(true);
   const [plannerMode, setPlannerMode] = useState(false);
@@ -352,11 +241,25 @@ export default function AIAgent({
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [showSkills, setShowSkills] = useState(false);
   const [agentCommandTasks, setAgentCommandTasks] = useState<AgentCommandTask[]>([]);
-  const [reviewQueue, setReviewQueue] = useState<AgentReviewItem[]>([]);
-  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
-  const [agentTask, setAgentTask] = useState(createAgentTaskState());
+  // 领域 hook：Agent 任务状态机（计划/运行/审阅/验证/失败/取消）
+  const {
+    agentTask,
+    markReviewing,
+    receivePlanTask,
+    markVerifying,
+    markVerificationResult,
+    failTaskWith,
+    startPlanningTask,
+    markRunning,
+    markCompleted,
+    cancelTaskNow,
+    resetTask,
+    approvePlanTask,
+  } = useAgentTask();
   const [assistantTerminalVisible, setAssistantTerminalVisible] = useState(false);
   const [usageText, setUsageText] = useState('');
+  // 断点续跑引用（组件级创建，useAgentChat 与 useAgentCheckpoint 共享）
+  const resumeCheckpointIdRef = useRef<string | null>(null);
 
   // 多模型对比 / 投票
   const [compareMode, setCompareMode] = useState(false);
@@ -367,23 +270,9 @@ export default function AIAgent({
   const [compareRunning, setCompareRunning] = useState(false);
   const [compareVotes, setCompareVotes] = useState<{ a: number; b: number }>({ a: 0, b: 0 });
   const labelOf = (value: string) => modelOptions.find((o: ModelOption) => o.value === value)?.label || value;
-  const abortRef = useRef<null | (() => void)>(null);
   const compareAbortRef = useRef<{ a?: () => void; b?: () => void }>({});
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const currentSessionIdRef = useRef<string>(crypto.randomUUID());
-  const pendingPlanStreamIdRef = useRef<string | null>(null);
-  // 当前 agent 流 id（onFilePreview 回调透传），用于拒绝尚未落盘的修改
-  const currentStreamIdRef = useRef<string | null>(null);
-  // 当前运行中的消息 requestId：停止生成时也要把 isStreaming 复位，否则
-  // 消息永久悬挂在流式样式且历史会话永不落盘。
-  const currentRequestIdRef = useRef<string | null>(null);
-  // 最新 send 引用：状态条「继续」按钮在 setInput 之后调用，需要拿到新闭包。
-  const sendRef = useRef<() => void>(() => {});
-  // 破坏性操作（delete/rename）等待用户审批
-  const [pendingDestructive, setPendingDestructive] = useState<{
-    request: { type: 'delete' | 'rename'; filePath: string; newPath?: string };
-    sid: string;
-  } | null>(null);
   const terminalId = useMemo(() => `assistant-agent-${Math.random().toString(36).slice(2)}`, []);
 
   // ===== @-mention popover =====
@@ -531,32 +420,10 @@ export default function AIAgent({
     setChatSessions(loadChatSessions());
   }, []);
 
+  // 面板打开时自动聚焦输入框（与 Cursor 的 Ctrl+L 心智一致）
   useEffect(() => {
-    if (messages.length === 0 || messages.some(message => message.isStreaming)) return;
-    const hasAssistant = messages.some(message => message.role === 'assistant' && message.content.trim());
-    if (!hasAssistant) return;
-    const session: ChatSession = {
-      id: currentSessionIdRef.current,
-      title: makeSessionTitle(messages),
-      preview: makeSessionPreview(messages),
-      updatedAt: Date.now(),
-      messages,
-    };
-    setChatSessions(prev => {
-      const next = [session, ...prev.filter(item => item.id !== session.id)].slice(0, 40);
-      saveChatSessions(next);
-      return next;
-    });
-  }, [messages]);
-
-  useEffect(() => {
-    if (!showTaskCenter && !loading) return undefined;
-    const timer = window.setInterval(refreshAgentTasks, 1500);
-    return () => window.clearInterval(timer);
-  }, [showTaskCenter, loading, refreshAgentTasks]);
-
-  useEffect(() => {
-    return () => abortRef.current?.();
+    const timer = setTimeout(() => textareaRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
   }, []);
 
   const activeProvider = useMemo(() => {
@@ -592,47 +459,100 @@ export default function AIAgent({
     [cliAgents, selectedCliAgentId],
   );
 
+  const notify = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    emitLoomEvent('loom:notify', { message, type });
+  }, []);
+
+  // 领域 hook：对话核心（消息/发送/流式/审阅队列/破坏性审批）
+  const {
+    messages, setMessages,
+    reviewQueue, setReviewQueue,
+    selectedReviewId, setSelectedReviewId,
+    loading, setLoading,
+    pendingDestructive, setPendingDestructive,
+    abortRef, currentRequestIdRef, currentStreamIdRef, pendingPlanStreamIdRef,
+    sendWith, stopGeneration,
+    acceptChange, rejectChange,
+    appendAssistantChunk, finishAssistantMessage,
+  } = useAgentChat({
+    workspacePath,
+    openFiles,
+    workspaceRules,
+    activeModel: activeProvider?.activeModel,
+    agentMode,
+    plannerMode,
+    verifyMode,
+    autoApplySafeEdits,
+    activeSkillId,
+    selectedCliAgent,
+    notify,
+    task: { startPlanningTask, markRunning, markCompleted, failTaskWith, cancelTaskNow, markReviewing, receivePlanTask, markVerifying, markVerificationResult },
+    resumeCheckpointIdRef,
+    refreshAgentTasks,
+    setUsageText,
+    onApplyEdit,
+    onOpenFile,
+    onCompare: () => runCompareRef.current?.(),
+    compareMode,
+  });
+
+  // ===== Checkpoint resume（断点续跑）—— 已抽到 useAgentCheckpoint hook =====
+  const {
+    showResumePanel,
+    setShowResumePanel,
+    checkpointList,
+    openResumePanel,
+    applyCheckpoint,
+    resetCheckpoint,
+  } = useAgentCheckpoint({
+    workspacePath,
+    notify,
+    onRestoreMessages: setMessages,
+    resumeCheckpointIdRef,
+  });
+
+  // 发送包装：读取最新 input（sendWith 由 useAgentChat 提供）
+  const inputRef = useRef(input);
+  useEffect(() => { inputRef.current = input; }, [input]);
+  const send = useCallback(() => { void sendWith(inputRef.current); }, [sendWith]);
+  const sendRef = useRef<() => void>(() => {});
+  useEffect(() => { sendRef.current = send; });
+  // 对比模式发送引用（runCompare 定义在其后，经 ref 解耦时序）
+  const runCompareRef = useRef<() => void>(() => {});
+  useEffect(() => { runCompareRef.current = runCompare; });
+
+  // 会话保存（消息稳定时写入历史）
+  useEffect(() => {
+    if (messages.length === 0 || messages.some(message => message.isStreaming)) return;
+    const hasAssistant = messages.some(message => message.role === 'assistant' && message.content.trim());
+    if (!hasAssistant) return;
+    const session: ChatSession = {
+      id: currentSessionIdRef.current,
+      title: makeSessionTitle(messages),
+      preview: makeSessionPreview(messages),
+      updatedAt: Date.now(),
+      messages,
+    };
+    setChatSessions(prev => {
+      const next = [session, ...prev.filter(item => item.id !== session.id)].slice(0, 40);
+      saveChatSessions(next);
+      return next;
+    });
+  }, [messages]);
+
+  // 任务中心轮询
+  useEffect(() => {
+    if (!showTaskCenter && !loading) return undefined;
+    const timer = window.setInterval(refreshAgentTasks, 1500);
+    return () => window.clearInterval(timer);
+  }, [showTaskCenter, loading, refreshAgentTasks]);
+
+  // 卸载时中止进行中的流
+  useEffect(() => () => abortRef.current?.(), []);
+
   const hasConfiguredModel = Boolean(modelOptions.length > 0 || selectedCliAgent);
   const canSend = input.trim().length > 0 && !loading && hasConfiguredModel;
   const reviewItem = selectedReview(reviewQueue, selectedReviewId);
-
-  const notify = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    window.dispatchEvent(new CustomEvent('loom:notify', { detail: { message, type } }));
-  }, []);
-
-  const appendAssistantChunk = useCallback((requestId: string, chunk: string) => {
-    const visibleChunk = cleanAssistantDisplayText(chunk);
-    if (!visibleChunk) return;
-    setMessages(prev => prev.map(message => (
-      message.requestId === requestId
-        ? { ...message, content: message.content + visibleChunk, isStreaming: true }
-        : message
-    )));
-  }, []);
-
-  const updateLastToolCall = useCallback((requestId: string, patch: Partial<ToolCallDisplay>) => {
-    setMessages(prev => prev.map(message => {
-      if (message.requestId !== requestId) return message;
-      const toolCalls = [...(message.toolCalls || [])];
-      if (toolCalls.length === 0) return message;
-      toolCalls[toolCalls.length - 1] = { ...toolCalls[toolCalls.length - 1], ...patch };
-      return { ...message, toolCalls };
-    }));
-  }, []);
-
-  const addToolCall = useCallback((requestId: string, toolCall: ToolCallDisplay) => {
-    setMessages(prev => prev.map(message => (
-      message.requestId === requestId
-        ? { ...message, toolCalls: [...(message.toolCalls || []), toolCall] }
-        : message
-    )));
-  }, []);
-
-  const finishAssistantMessage = useCallback((requestId: string) => {
-    setMessages(prev => prev.map(message => (
-      message.requestId === requestId ? { ...message, isStreaming: false } : message
-    )));
-  }, []);
 
   const applySkillPrompt = useCallback((skill: Skill) => {
     setActiveSkillId(skill.id);
@@ -659,99 +579,6 @@ export default function AIAgent({
       )),
     });
   }, [config]);
-
-  const addReview = useCallback((filePath: string, content: string, existed: boolean, originalContent: string) => {
-    const id = createReviewId(filePath);
-    setReviewQueue(prev => addOrUpdateReviewItem(prev, {
-      id,
-      filePath,
-      original: originalContent || '',
-      modified: content,
-      existed,
-      status: 'pending',
-    }));
-    setSelectedReviewId(id);
-    setAgentTask(prev => ({ ...prev, status: 'reviewing' }));
-  }, []);
-
-  const acceptChange = useCallback((id: string) => {
-    const item = reviewQueue.find(entry => entry.id === id);
-    if (item && item.status === 'pending') {
-      onApplyEdit?.(item.filePath, item.modified);
-      onOpenFile?.(item.filePath, item.modified);
-      notify(`已接受 ${basename(item.filePath)}`, 'success');
-    }
-    setReviewQueue(prev => acceptReviewItem(prev, id));
-  }, [notify, onApplyEdit, onOpenFile, reviewQueue]);
-
-  const rejectChange = useCallback(async (id: string) => {
-    const item = reviewQueue.find(entry => entry.id === id);
-    if (!item) return;
-    let applied = false;
-    const sid = currentStreamIdRef.current;
-    if (sid && item.filePath) {
-      try {
-        const res = await window.loom?.ai?.rejectAgentEdit?.(sid, item.filePath);
-        applied = !!res?.applied;
-      } catch { /* IPC 失败时按未知处理，仅本地移除 */ }
-    }
-    if (applied) {
-      notify(`已拒绝 ${basename(item.filePath)}，但该修改可能已写入磁盘，请按 Ctrl+Z 手动撤销`, 'info');
-    } else {
-      notify(`已拒绝 ${basename(item.filePath)}，agent 将跳过该修改`, 'info');
-    }
-    setReviewQueue(prev => rejectReviewItem(prev, id));
-  }, [notify, reviewQueue]);
-
-  const handleAgentChunk = useCallback((requestId: string, rawChunk: unknown) => {
-    const chunk = normalizeChunk(rawChunk);
-    if (chunk.type === 'text') {
-      appendAssistantChunk(requestId, chunk.content || '');
-      return;
-    }
-    if (chunk.type === 'plan') {
-      setAgentTask(prev => receivePlan(prev, chunk.content || ''));
-      appendAssistantChunk(requestId, `\n\n${chunk.content || ''}`);
-      return;
-    }
-    if (chunk.type === 'tool_call') {
-      addToolCall(requestId, {
-        name: chunk.toolName || 'tool',
-        args: chunk.toolArgs,
-        status: 'running',
-        expanded: false,
-      });
-      return;
-    }
-    if (chunk.type === 'tool_result') {
-      updateLastToolCall(requestId, {
-        status: 'done',
-        result: chunk.content || '',
-      });
-      return;
-    }
-    if (chunk.type === 'task_event') {
-      const eventText = renderTaskEvent(chunk.taskEvent);
-      if (eventText) {
-        addToolCall(requestId, {
-          name: `PowerShell ${chunk.taskEvent?.type || ''}`.trim(),
-          args: {
-            command: chunk.taskEvent ? [chunk.taskEvent.command, ...(chunk.taskEvent.args || [])].join(' ') : '',
-            attempt: chunk.taskEvent?.attempt,
-          },
-          status: chunk.taskEvent?.type === 'error' ? 'error' : chunk.taskEvent?.type === 'exit' ? 'done' : 'running',
-          result: eventText,
-          expanded: false,
-        });
-      }
-      refreshAgentTasks();
-      return;
-    }
-    if (chunk.type === 'error') {
-      setAgentTask(prev => failTask(prev, chunk.content || 'Agent failed'));
-      appendAssistantChunk(requestId, `\n\n${chunk.content || 'Agent failed'}`);
-    }
-  }, [addToolCall, appendAssistantChunk, refreshAgentTasks, updateLastToolCall]);
 
   const runCompare = useCallback(async () => {
     const prompt = input.trim();
@@ -823,215 +650,6 @@ export default function AIAgent({
     setCompareRunning(false);
   }, []);
 
-  const send = useCallback(async () => {
-    if (compareMode) {
-      runCompare();
-      return;
-    }
-    const prompt = input.trim();
-    if (!prompt || loading) return;
-
-    const requestId = crypto.randomUUID();
-    currentRequestIdRef.current = requestId;
-    const attachedFiles = [...openFiles];
-    const userMessage: Message = { role: 'user', content: prompt, attachedFiles };
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content: '',
-      toolCalls: [],
-      isStreaming: true,
-      requestId,
-    };
-
-    setMessages(prev => [...prev, userMessage, assistantMessage]);
-    setInput('');
-    setLoading(true);
-    setUsageText('');
-    setAgentTask(prev => agentMode ? startPlanning(prev) : { ...prev, status: 'running', error: null });
-
-    // 解析输入中的 @relativePath 引用：读取文件内容加入 context。
-    // 解析 @codebase path:symbol 引用：读取符号文本加入 context。
-    // 这让用户能精确控制 AI 看哪些代码，而不只是依赖「打开文件」。
-    const mentionContext = await (async (): Promise<string> => {
-      const parts: string[] = [];
-      // @relativePath 文件引用（排除 @codebase）
-      const fileMentions = prompt.match(/(?:^|\s)@(?!codebase\b)([\w./\\-]+\.\w+)/g) || [];
-      const seenPaths = new Set<string>();
-      for (const m of fileMentions) {
-        const rel = m.trim().replace(/^@/, '');
-        const fullPath = workspacePath ? `${workspacePath}/${rel}`.replace(/\\/g, '/') : rel;
-        if (seenPaths.has(fullPath)) continue;
-        seenPaths.add(fullPath);
-        try {
-          const content = await window.loom?.fs?.readFile?.(fullPath);
-          if (typeof content === 'string' && !content.startsWith('__ERR__:')) {
-            parts.push(`Referenced file ${rel}:\n${content.slice(0, 8000)}`);
-          }
-        } catch {}
-      }
-      // @codebase path:symbol 引用
-      const codebaseMentions = prompt.match(/@codebase\s+([\w./\\-]+)(?::(\d+))?/g) || [];
-      for (const m of codebaseMentions) {
-        const match = m.match(/@codebase\s+([\w./\\-]+)(?::(\d+))?/);
-        if (!match) continue;
-        const rel = match[1];
-        const line = match[2] ? parseInt(match[2], 10) : undefined;
-        const fullPath = workspacePath ? `${workspacePath}/${rel}`.replace(/\\/g, '/') : rel;
-        try {
-          const content = await window.loom?.fs?.readFile?.(fullPath);
-          if (typeof content === 'string' && !content.startsWith('__ERR__:')) {
-            if (line) {
-              // 提取符号附近的代码（前后 40 行）
-              const lines = content.split('\n');
-              const start = Math.max(0, line - 5);
-              const end = Math.min(lines.length, line + 40);
-              parts.push(`Symbol @codebase ${rel}:${line}:\n${lines.slice(start, end).join('\n')}`);
-            } else {
-              parts.push(`@codebase ${rel}:\n${content.slice(0, 6000)}`);
-            }
-          }
-        } catch {}
-      }
-      return parts.join('\n\n---\n\n');
-    })();
-
-    const context = compactContext(attachedFiles, workspaceRules);
-    const finalPrompt = [
-      prompt,
-      context ? `\n\nContext:\n${context}` : '',
-      mentionContext ? `\n\nMentioned:\n${mentionContext}` : '',
-      plannerMode ? '\n\n先输出计划，等待我确认后再继续执行。' : '',
-    ].join('');
-
-    try {
-      if (selectedCliAgent) {
-        const result = await window.loom?.cliAgents?.run?.(selectedCliAgent.id, finalPrompt, workspacePath) as any;
-        const stdout = result?.stdout || '';
-        const stderr = result?.stderr || '';
-        if (result?.ok === false || (typeof result?.exitCode === 'number' && result.exitCode !== 0)) {
-          appendAssistantChunk(requestId, stderr || `CLI Agent 失败（退出码 ${result?.exitCode}）`);
-          setAgentTask(prev => failTask(prev, stderr || `CLI Agent failed: ${result.exitCode}`));
-        } else {
-          appendAssistantChunk(requestId, stdout || 'CLI Agent 已完成，但没有输出。');
-          setAgentTask(prev => ({ ...prev, status: 'completed' }));
-        }
-        // CRITICAL FIX: the CLI path previously never reset loading — the UI
-        // spun forever and no further messages could be sent.
-        setLoading(false);
-        finishAssistantMessage(requestId);
-        return;
-      }
-
-      const history = [...messages, { role: 'user', content: finalPrompt }];
-      if (agentMode) {
-        abortRef.current = window.loom?.ai?.agentChatStream?.(
-          history,
-          workspacePath,
-          attachedFiles,
-          (chunk: unknown) => handleAgentChunk(requestId, chunk),
-          (usage?: any) => {
-            finishAssistantMessage(requestId);
-            setLoading(false);
-            setAgentTask(prev => prev.status === 'running' || prev.status === 'planning'
-              ? { ...prev, status: 'completed' }
-              : prev);
-            if (usage) setUsageText(formatUsage(usage, activeProvider?.activeModel));
-            abortRef.current = null;
-            pendingPlanStreamIdRef.current = null;
-            setPendingDestructive(null);
-            currentRequestIdRef.current = null;
-            refreshAgentTasks();
-          },
-          (error: Error) => {
-            const errorMsg = getLocalizedErrorMessage(error.message, getLocale() as 'zh-CN' | 'en-US');
-            appendAssistantChunk(requestId, `\n\n${errorMsg}`);
-            finishAssistantMessage(requestId);
-            setLoading(false);
-            setAgentTask(prev => failTask(prev, errorMsg));
-            abortRef.current = null;
-            pendingPlanStreamIdRef.current = null;
-            setPendingDestructive(null);
-            currentRequestIdRef.current = null;
-          },
-          (filePath: string, content: string, existed: boolean, originalContent: string, sid?: string) => {
-            if (sid) currentStreamIdRef.current = sid;
-            addReview(filePath, content, existed, originalContent);
-          },
-          (filePath: string, content: string) => addReview(filePath, content, false, ''),
-          (filePath: string, content: string) => addReview(filePath, content, true, openFiles.find(file => file.path === filePath)?.content || ''),
-          (planText: string, sid: string) => {
-            // 主进程已暂停 agent，等待用户在 UI 上确认/拒绝
-            pendingPlanStreamIdRef.current = sid;
-          },
-          (request: { type: 'delete' | 'rename'; filePath: string; newPath?: string }, sid: string) => {
-            // 主进程已暂停 agent 的 delete/rename 工具，等待用户审批
-            setPendingDestructive({ request, sid });
-          },
-          {
-            previewFileWrites: true,
-            autoApplySafeEdits,
-            plannerMode,
-            verifyMode,
-            // 已激活的 skill 注入 agent system prompt
-            activeSkillId: activeSkillId || undefined,
-            // planner 模式语义为「先出计划→等待审批→再执行」，故 planOnly 必须为 false，
-            // 否则 ai-engine 会在输出 plan 后立即 return，审批链路（planApproval）变为死代码。
-            planOnly: false,
-          },
-        );
-      } else {
-        abortRef.current = window.loom?.ai?.chatStream?.(
-          history,
-          context,
-          (chunk: string) => appendAssistantChunk(requestId, chunk),
-          () => {
-            finishAssistantMessage(requestId);
-            setLoading(false);
-            setAgentTask(prev => ({ ...prev, status: 'completed' }));
-            abortRef.current = null;
-          },
-          (error: Error) => {
-            const errorMsg = getLocalizedErrorMessage(error.message, getLocale() as 'zh-CN' | 'en-US');
-            appendAssistantChunk(requestId, `\n\n${errorMsg}`);
-            finishAssistantMessage(requestId);
-            setLoading(false);
-            setAgentTask(prev => failTask(prev, errorMsg));
-            abortRef.current = null;
-          },
-          (usage: { input: number; output: number }) => {
-            setUsageText(formatUsage(usage, activeProvider?.activeModel));
-          },
-        );
-      }
-    } catch (error: any) {
-      appendAssistantChunk(requestId, error?.message || 'Agent request failed');
-      finishAssistantMessage(requestId);
-      setLoading(false);
-      setAgentTask(prev => failTask(prev, error?.message || 'Agent request failed'));
-    }
-  }, [
-    addReview,
-    agentMode,
-    appendAssistantChunk,
-    autoApplySafeEdits,
-    compareMode,
-    finishAssistantMessage,
-    handleAgentChunk,
-    input,
-    loading,
-    messages,
-    openFiles,
-    plannerMode,
-    refreshAgentTasks,
-    runCompare,
-    selectedCliAgent,
-    workspacePath,
-    workspaceRules,
-  ]);
-
-  // 保持 sendRef 指向最新 send 闭包（「继续」按钮等场景需要新 input 值）。
-  useEffect(() => { sendRef.current = send; });
-
   // 运行结束后一键继续：以当前对话历史再发一轮。
   const continueAgent = useCallback(() => {
     if (loading) return;
@@ -1039,26 +657,16 @@ export default function AIAgent({
     setTimeout(() => sendRef.current(), 0);
   }, [loading, locale]);
 
-  const stopGeneration = useCallback(() => {
-    abortRef.current?.();
-    abortRef.current = null;
-    setLoading(false);
-    setAgentTask(prev => cancelTask(prev));
-    // 停止时同步复位流式状态，避免消息永久悬挂（isStreaming 不落盘、样式残留）。
-    const rid = currentRequestIdRef.current;
-    if (rid) finishAssistantMessage(rid);
-    currentRequestIdRef.current = null;
-  }, [finishAssistantMessage]);
-
   const startNewChat = useCallback(() => {
     stopGeneration();
     currentSessionIdRef.current = crypto.randomUUID();
     setMessages([]);
     setReviewQueue([]);
     setSelectedReviewId(null);
-    setAgentTask(createAgentTaskState());
+    resetTask();
     setUsageText('');
-  }, [stopGeneration]);
+    resetCheckpoint();
+  }, [stopGeneration, resetTask, resetCheckpoint]);
 
   const restoreChatSession = useCallback((session: ChatSession) => {
     stopGeneration();
@@ -1066,10 +674,10 @@ export default function AIAgent({
     setMessages(session.messages || []);
     setReviewQueue([]);
     setSelectedReviewId(null);
-    setAgentTask(createAgentTaskState());
+    resetTask();
     setUsageText('');
     setShowHistory(false);
-  }, [stopGeneration]);
+  }, [stopGeneration, resetTask]);
 
   const deleteChatSession = useCallback((sessionId: string) => {
     setChatSessions(prev => {
@@ -1089,10 +697,10 @@ export default function AIAgent({
       getLoom()?.ai?.approvePlan(sid);
       pendingPlanStreamIdRef.current = null;
     }
-    setAgentTask(prev => approvePlan(prev));
+    approvePlanTask();
     setPlannerMode(false);
     notify('计划已确认，可以继续执行。', 'success');
-  }, [notify]);
+  }, [notify, approvePlanTask]);
 
   const rejectCurrentPlan = useCallback(() => {
     const sid = pendingPlanStreamIdRef.current;
@@ -1100,8 +708,8 @@ export default function AIAgent({
       getLoom()?.ai?.rejectPlan(sid);
       pendingPlanStreamIdRef.current = null;
     }
-    setAgentTask(prev => cancelTask(prev));
-  }, []);
+    cancelTaskNow();
+  }, [cancelTaskNow]);
 
   const approveDestructiveAction = useCallback(() => {
     const pending = pendingDestructive;
@@ -1169,6 +777,16 @@ export default function AIAgent({
           </button>
           <button type="button" onClick={startNewChat} className="ai-header-btn" title="新对话" aria-label="新对话" data-testid="ai-new-chat">
             <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" stroke-linecap="round"/></svg>
+          </button>
+          <button
+            type="button"
+            onClick={openResumePanel}
+            className={`ai-header-btn ${resumeCheckpointIdRef.current ? 'active' : ''}`}
+            title={locale === 'zh-CN' ? '恢复上次运行（断点续跑）' : 'Resume last run (checkpoint)'}
+            aria-label={locale === 'zh-CN' ? '恢复上次运行' : 'Resume last run'}
+            data-testid="ai-resume"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8 2v6l3.5 2M8 2a6 6 0 105 2.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 2v6l3.5 2" fill="currentColor" stroke="currentColor" strokeWidth="0.4"/></svg>
           </button>
           <button
             type="button"
@@ -1256,6 +874,56 @@ export default function AIAgent({
         />
       )}
 
+      {showResumePanel && (
+        <div className="agent-resume-panel" data-testid="agent-resume-panel">
+          <div className="agent-resume-header">
+            <span>{locale === 'zh-CN' ? '恢复运行（检查点）' : 'Resume (checkpoints)'}</span>
+            <button type="button" className="ai-header-btn" onClick={() => setShowResumePanel(false)} aria-label="关闭">
+              <svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+          <div className="agent-resume-list">
+            {checkpointList.length === 0 ? (
+              <div className="agent-resume-empty">
+                {locale === 'zh-CN'
+                  ? '暂无检查点。Agent 运行结束后会自动保存，可随时从这里继续。'
+                  : 'No checkpoints yet. Agent runs are saved automatically — resume anytime.'}
+              </div>
+            ) : checkpointList.map(ckpt => (
+              <div key={ckpt.id} className="agent-resume-item">
+                <div className="agent-resume-item-main">
+                  <div className="agent-resume-item-title">{ckpt.id}</div>
+                  <div className="agent-resume-item-meta">
+                    {new Date(ckpt.createdAt).toLocaleString()} · {ckpt.messageCount} 条消息
+                    {ckpt.preview ? ` · ${ckpt.preview.slice(0, 60)}` : ''}
+                  </div>
+                </div>
+                <div className="agent-resume-item-actions">
+                  <button
+                    type="button"
+                    className="settings-btn-sm primary"
+                    onClick={() => applyCheckpoint(ckpt.id)}
+                  >
+                    {locale === 'zh-CN' ? '恢复' : 'Resume'}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-btn-sm"
+                    title={locale === 'zh-CN' ? '删除检查点' : 'Delete checkpoint'}
+                    onClick={async () => {
+                      await window.loom?.ai?.checkpointDelete?.(workspacePath, ckpt.id).catch(() => {});
+                      openResumePanel();
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <AgentPlanApproval task={agentTask} onApprove={approveCurrentPlan} onCancel={rejectCurrentPlan} locale={locale} />
 
       <AgentRunStatus
@@ -1265,6 +933,10 @@ export default function AIAgent({
         locale={locale}
         onContinue={continueAgent}
       />
+
+      {agentTask.verification && (
+        <AgentVerificationPanel task={agentTask} />
+      )}
 
       {pendingDestructive && (
         <div className="agent-destructive-bar" data-testid="agent-destructive-bar">
@@ -1615,3 +1287,7 @@ export default function AIAgent({
     </div>
   );
 }
+
+// 性能：App 已把 openFiles 快照防抖为 aiContextFiles，加上 memo 后，输入过程
+// 中 AI 面板不再随每次按键重渲染（props 均为稳定引用）。
+export default React.memo(AIAgent);

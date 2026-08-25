@@ -1,4 +1,5 @@
 import React, { useEffect, useSyncExternalStore } from 'react';
+import { t } from '@/shared/i18n';
 
 export interface ConfirmOptions {
   title?: string;
@@ -67,8 +68,8 @@ export default function ConfirmModal() {
 
   if (!current) return null;
 
-  const confirmLabel = current.confirmText || '确定';
-  const cancelLabel = current.cancelText || '取消';
+  const confirmLabel = current.confirmText || t('confirm.ok');
+  const cancelLabel = current.cancelText || t('confirm.cancel');
 
   return (
     <div

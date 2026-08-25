@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import TitleBar from './components/TitleBar';
 import ActivityBar from './components/ActivityBar';
 import Sidebar from './components/Sidebar';
@@ -20,7 +20,12 @@ import { closeWorkspaceState, fsReadErrorMessage, inferWorkspaceFromOpenFiles, i
 import { clampAssistantPanelWidth } from './assistant-panel';
 import { detectLang, loadLayout, saveLayout, loadPanelState, savePanelState, loadSession, saveSession, extMap, type SavedLayout } from './app-storage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { t, setLocale as setI18nLocale } from '@/shared/i18n';
+import { t } from '@/shared/i18n';
+import { buildCommands, buildMenuItems } from './app-commands';
+import { useNotifications } from './hooks/useNotifications';
+import { useThemeLocale } from './hooks/useThemeLocale';
+import { useGitStatus } from './hooks/useGitStatus';
+import { emitLoomEvent, onLoomEvent } from './loom-events';
 
 export interface OpenFile {
   path: string;
@@ -28,6 +33,10 @@ export interface OpenFile {
   content: string;
   language: string;
   originalContent: string;
+  /**
+   * 预览标签（VS Code 语义）：单击打开、可被下一个单击替换；编辑/双击后转为正式标签。
+   */
+  isPreview?: boolean;
   /**
    * Set when the session restore truncated this file's content to fit in
    * localStorage. Saving truncated content would permanently destroy the
@@ -39,19 +48,18 @@ export interface OpenFile {
 export default function App() {
   const layout = loadLayout();
   const panelState = loadPanelState();
-  const session = loadSession();
+  // 会话改为异步恢复（磁盘存储）：首帧先空，挂载后 loadSession() 填充
+  const sessionRef = useRef<{ openFiles: OpenFile[]; activeIdx: number; workspace: string } | null>(null);
 
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>(session?.openFiles || []);
-  const [activeIdx, setActiveIdx] = useState(Math.min(session?.activeIdx || 0, Math.max(0, (session?.openFiles?.length || 1) - 1)));
-  const [workspace, setWorkspace] = useState(session?.workspace || '');
-  const [sidebarView, setSidebarView] = useState<string>(session?.workspace ? 'explorer' : layout.activeView);
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [workspace, setWorkspace] = useState('');
+  const [sidebarView, setSidebarView] = useState<string>(layout.activeView);
   const [sidebarWidth, setSidebarWidth] = useState(layout.sidebarWidth);
   const [panelVisible, setPanelVisible] = useState(panelState.visible);
   const [panelHeight, setPanelHeight] = useState(layout.panelHeight);
   const [cmdPalette, setCmdPalette] = useState(false);
-  const [untitledCount, setUntitledCount] = useState(
-    Math.max(1, (session?.openFiles || []).filter(f => f.path.startsWith('untitled-')).length + 1)
-  );
+  const [untitledCount, setUntitledCount] = useState(1);
   const [aiOpen, setAiOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -63,16 +71,15 @@ export default function App() {
   const [isDebugging, setIsDebugging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [workspaceRules, setWorkspaceRules] = useState<string>('');
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const notifIdRef = useRef(0);
+  // 领域 hook：通知队列 + 主题/语言（App.tsx 模块化拆分）
+  const { notifications, addNotification, dismissNotification } = useNotifications();
+  const { theme, locale, applyTheme, setTheme, setLocale } = useThemeLocale();
   const [splitMode, setSplitMode] = useState(layout.splitMode ?? false);
   const [splitRatio, setSplitRatio] = useState(layout.splitRatio ?? 50);
   const [splitIdx, setSplitIdx] = useState(layout.splitIdx ?? 0);
   const [focusSide, setFocusSide] = useState<'left' | 'right'>('left');
-  const [gitStatusMap, setGitStatusMap] = useState<Record<string, string>>({});
-  const [gitBranch, setGitBranch] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'dark' | 'light' | 'system'>('dark');
-  const [locale, setLocale] = useState<'zh-CN' | 'en-US'>('zh-CN');
+  // 领域 hook：Git 状态（轮询 + 即时刷新）
+  const { gitStatusMap, gitBranch, refreshGitStatus } = useGitStatus(workspace);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
   const [aiPanelWidth, setAiPanelWidth] = useState(clampAssistantPanelWidth(layout.aiPanelWidth));
@@ -94,58 +101,6 @@ export default function App() {
   useEffect(() => { openFilesRef.current = openFiles; }, [openFiles]);
   useEffect(() => { activeIdxRef.current = activeIdx; }, [activeIdx]);
 
-  // ==== Apply theme + locale ====
-  const applyTheme = useCallback((t: 'dark' | 'light' | 'system') => {
-    setTheme(t);
-    document.documentElement.setAttribute('data-theme', t);
-  }, []);
-
-  // Keep the i18n framework locale in sync with the app's React state locale.
-  // Note: must use the ES module import — `require()` is undefined in the
-  // sandboxed renderer (sandbox: true, nodeIntegration: false) and would throw.
-  const syncI18nLocale = useCallback((loc: string) => {
-    setI18nLocale(loc === 'zh-CN' ? 'zh-CN' : 'en-US');
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    window.loom?.settings?.getAll?.().then((s: any) => {
-      if (cancelled || !s) return;
-      const t = s.theme || 'dark';
-      applyTheme(t);
-      if (s.locale) {
-        setLocale(s.locale);
-        syncI18nLocale(s.locale);
-      }
-    }).catch(() => {});
-
-    // Listen for system theme changes when in "system" mode
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const onSystemChange = () => {
-      const current = document.documentElement.getAttribute('data-theme');
-      if (current === 'system') {
-        // Force a re-render so the @media query takes effect
-        document.documentElement.style.colorScheme = mq.matches ? 'dark' : 'light';
-      }
-    };
-    mq.addEventListener?.('change', onSystemChange);
-    document.documentElement.style.colorScheme = mq.matches ? 'dark' : 'light';
-
-    const handler = (e: CustomEvent) => {
-      if (e.detail?.key === 'theme') applyTheme(e.detail.value);
-      if (e.detail?.key === 'locale') {
-        setLocale(e.detail.value);
-        syncI18nLocale(e.detail.value);
-      }
-    };
-    window.addEventListener('loom:setting-change' as any, handler);
-    return () => {
-      cancelled = true;
-      mq.removeEventListener?.('change', onSystemChange);
-      window.removeEventListener('loom:setting-change' as any, handler);
-    };
-  }, [applyTheme, syncI18nLocale]);
-
   // ==== Check agent status (both modes) ====
   useEffect(() => {
     const check = () => {
@@ -161,45 +116,12 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
-  // ==== Git status（watcher 触发为主，低频轮询为补充）====
-  useEffect(() => {
-    if (!workspace) { setGitStatusMap({}); setGitBranch(null); return; }
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const fetchStatus = () => {
-      window.loom?.git?.status?.(workspace).then((result: any) => {
-        const map: Record<string, string> = {};
-        (result?.changes || []).forEach((c: any) => { if (c.file) map[c.file] = c.status; });
-        setGitStatusMap(map);
-        setGitBranch(result?.branch || null);
-      }).catch(() => { setGitStatusMap({}); setGitBranch(null); });
-    };
-    fetchStatus();
-    // Low-frequency fallback poll (30s) — the file watcher handles real-time updates.
-    const startPolling = () => { if (!timer && document.hasFocus()) timer = setInterval(fetchStatus, 30000); };
-    const stopPolling = () => { if (timer) { clearInterval(timer); timer = null; } };
-    if (document.hasFocus()) startPolling();
-    const onFocus = () => { fetchStatus(); startPolling(); };
-    const onBlur = () => stopPolling();
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('blur', onBlur);
-    return () => {
-      stopPolling();
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('blur', onBlur);
-    };
-  }, [workspace]);
-
   // ==== File watcher ====
   useEffect(() => {
     if (!workspace) return;
     window.loom?.watcher?.start?.(workspace).catch(() => {});
     const cleanup = window.loom?.watcher?.onChange?.((_cwd: string, changedPaths: string[]) => {
-      window.loom?.git?.status?.(workspace).then((result: any) => {
-        const map: Record<string, string> = {};
-        (result?.changes || []).forEach((c: any) => { if (c.file) map[c.file] = c.status; });
-        setGitStatusMap(map);
-        setGitBranch(result?.branch || null);
-      }).catch(() => {});
+      refreshGitStatus();
       // Mark open files as stale so the user can choose to reload.
       // This only fires for files that are *not* currently dirty, because if
       // the user has unsaved changes, the disk version is theirs to overwrite.
@@ -235,7 +157,7 @@ export default function App() {
       window.loom?.watcher?.stop?.().catch(() => {});
       if (cleanup) cleanup();
     };
-  }, [workspace]);
+  }, [workspace, refreshGitStatus]);
 
   // Re-read a file from disk and refresh the open file's content (Revert).
   const revertFile = useCallback(async (filePath: string) => {
@@ -246,24 +168,26 @@ export default function App() {
         : f));
       staleFilesRef.current.delete(filePath);
       setStaleVersion(v => v + 1);
-      window.dispatchEvent(new CustomEvent('loom:notify', {
-        detail: { message: t('app.reloadedFromDisk', { file: filePath.split(/[\\/]/).pop() ?? '' }), type: 'info' },
-      }));
+      emitLoomEvent('loom:notify', { message: t('app.reloadedFromDisk', { file: filePath.split(/[\\/]/).pop() ?? '' }), type: 'info' },);
     } catch (e: any) {
-      window.dispatchEvent(new CustomEvent('loom:notify', {
-        detail: { message: t('app.reloadFailed', { msg: e.message }), type: 'error' },
-      }));
+      emitLoomEvent('loom:notify', { message: t('app.reloadFailed', { msg: e.message }), type: 'error' },);
     }
   }, []);
 
   // Expose revert to menu / command palette via a custom event.
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
+    const offRevert = onLoomEvent('loom:revert-file', () => {
       const f = openFiles[activeIdx];
       if (f && f.path) revertFile(f.path);
+    });
+    const offHistory = onLoomEvent('loom:open-history', () => {
+      const f = openFiles[activeIdx];
+      if (f?.path) setHistoryTarget(f.path);
+    });
+    return () => {
+      offRevert();
+      offHistory();
     };
-    window.addEventListener('loom:revert-file' as any, handler);
-    return () => window.removeEventListener('loom:revert-file' as any, handler);
   }, [openFiles, activeIdx, revertFile]);
 
   // ==== Local history snapshots (file-level, 30s debounce) ====
@@ -299,42 +223,36 @@ export default function App() {
     savePanelState({ visible: panelVisible });
   }, [panelVisible]);
 
+  // 会话恢复（异步磁盘加载，fire-and-forget）
+  useEffect(() => {
+    let cancelled = false;
+    loadSession().then(s => {
+      if (cancelled || !s) return;
+      sessionRef.current = s;
+      setOpenFiles(s.openFiles);
+      setActiveIdx(Math.min(s.activeIdx, Math.max(0, s.openFiles.length - 1)));
+      setWorkspace(s.workspace);
+      setUntitledCount(Math.max(1, s.openFiles.filter(f => f.path.startsWith('untitled-')).length + 1));
+      setSidebarView(v => v || (s.workspace ? 'explorer' : 'explorer'));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // 会话持久化（1.5s 防抖 → 主进程磁盘原子写）
   useEffect(() => {
     if (saveSessionTimer.current) clearTimeout(saveSessionTimer.current);
     saveSessionTimer.current = setTimeout(() => {
-      saveSession({ openFiles, activeIdx, workspace });
+      saveSession({ openFiles, activeIdx, workspace }).catch(() => {});
     }, 1500);
     return () => { if (saveSessionTimer.current) clearTimeout(saveSessionTimer.current); };
   }, [openFiles, activeIdx, workspace]);
 
-  // ==== Notifications ====
-  const addNotification = useCallback((message: string, type: NotificationType = 'info', duration?: number) => {
-    const id = 'n' + (++notifIdRef.current);
-    setNotifications(prev => [...prev, { id, type, message, duration }]);
-  }, []);
-  const dismissNotification = useCallback((id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
+  useEffect(() => {
+    return onLoomEvent('loom:clear-output', () => setOutputLines([]));
   }, []);
 
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const { message, type, duration } = e.detail || {};
-      if (message) addNotification(message, type || 'info', duration);
-    };
-    window.addEventListener('loom:notify' as any, handler);
-    return () => window.removeEventListener('loom:notify' as any, handler);
-  }, [addNotification]);
-
-  useEffect(() => {
-    const handler = () => setOutputLines([]);
-    window.addEventListener('loom:clear-output' as any, handler);
-    return () => window.removeEventListener('loom:clear-output' as any, handler);
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: CustomEvent) => setProblems(e.detail || []);
-    window.addEventListener('loom:diagnostics' as any, handler);
-    return () => window.removeEventListener('loom:diagnostics' as any, handler);
+    return onLoomEvent('loom:diagnostics', detail => setProblems(detail || []));
   }, []);
 
   // ==== Workspace rules ====
@@ -352,7 +270,7 @@ export default function App() {
       } catch { setWorkspaceRules(''); }
     };
     loadRules();
-  }, [workspace]);
+  }, [workspace, aiOpen]);
 
   // 打开工作区后空闲预建代码索引，避免首次 @检索/智能问答阻塞（P1-2）
   useEffect(() => {
@@ -458,7 +376,7 @@ export default function App() {
       addOrFocusFile(abs, content);
       if (line && line > 0) {
         setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('loom:go-to-line', { detail: { line } }));
+          emitLoomEvent('loom:go-to-line', { line });
         }, 80);
       }
     } catch { /* file may have moved */ }
@@ -493,8 +411,23 @@ export default function App() {
   }, [untitledCount, addOrFocusFile]);
 
   const handleContentChange = useCallback((filePath: string, newContent: string) => {
-    setOpenFiles(prev => prev.map(f => f.path === filePath ? { ...f, content: newContent } : f));
+    setOpenFiles(prev => prev.map(f => {
+      if (f.path !== filePath) return f;
+      // 开始编辑预览标签 → 自动钉住（转为正式标签），与 VS Code 一致
+      const willDirty = isFileDirty(newContent, f.originalContent);
+      return { ...f, content: newContent, isPreview: f.isPreview && !willDirty ? true : false };
+    }));
   }, []);
+
+  /** 钉住预览标签（双击文件树 / 点击标签时调用）。 */
+  const pinFile = useCallback((filePath: string) => {
+    setOpenFiles(prev => prev.map(f => (f.path === filePath ? { ...f, isPreview: false } : f)));
+  }, []);
+
+  // 文件树双击 → 钉住预览标签
+  useEffect(() => {
+    return onLoomEvent('loom:pin-file', filePath => pinFile(filePath));
+  }, [pinFile]);
 
   const saveFile = useCallback(async () => {
     // Read current values from refs to avoid stale closures
@@ -511,7 +444,7 @@ export default function App() {
         const newName = newPath.split(/[/\\]/).pop() || newPath;
         await window.loom.fs.writeFile(newPath, f.content);
         setOpenFiles(prev => prev.map(x => x === f
-          ? { ...x, path: newPath, name: newName, originalContent: f.content }
+          ? { ...x, path: newPath, name: newName, originalContent: f.content, isPreview: false }
           : x));
         setSelectedFile(newPath);
         addNotification(t('app.fileSaved', { file: newName }), 'success');
@@ -528,7 +461,7 @@ export default function App() {
         return;
       }
       await window.loom.fs.writeFile(f.path, f.content);
-      setOpenFiles(prev => prev.map(x => x === f ? { ...x, originalContent: f.content } : x));
+      setOpenFiles(prev => prev.map(x => x === f ? { ...x, originalContent: f.content, isPreview: false } : x));
       staleFilesRef.current.delete(f.path);
       // 记录保存时间戳，让 watcher 在 1.5s 内忽略该路径的 stale 标记
       recentlySavedRef.current.set(f.path, Date.now());
@@ -596,7 +529,7 @@ export default function App() {
   // ==== Debugger ====
   const startDebug = useCallback(async () => {
     setPanelVisible(true);
-    window.dispatchEvent(new CustomEvent('loom:open-panel-tab', { detail: 'output' }));
+    emitLoomEvent('loom:open-panel-tab', 'output');
     const f = openFilesRef.current[activeIdxRef.current];
     if (!f) { addOutput(t('app.debugOpenFileFirst')); return; }
     if (!workspace) { addOutput(t('app.debugOpenFolderFirst')); return; }
@@ -638,7 +571,7 @@ export default function App() {
 
   const runCurrentFile = useCallback(async () => {
     setPanelVisible(true);
-    window.dispatchEvent(new CustomEvent('loom:open-panel-tab', { detail: 'output' }));
+    emitLoomEvent('loom:open-panel-tab', 'output');
     const f = openFilesRef.current[activeIdxRef.current];
     if (!f) { addOutput(t('app.runOpenFileFirst')); return; }
     if (!workspace) { addOutput(t('app.runOpenFolderFirst')); return; }
@@ -769,6 +702,24 @@ export default function App() {
     setSelectedFile(target.path);
   }, [openFiles]);
 
+  // ==== Ctrl+Tab MRU 标签切换 ====
+  const tabMruRef = useRef<string[]>([]);
+  useEffect(() => {
+    const f = openFiles[activeIdx];
+    if (f) {
+      tabMruRef.current = [f.path, ...tabMruRef.current.filter(p => p !== f.path)].slice(0, 30);
+    }
+  }, [activeIdx, openFiles]);
+  const cycleTabs = useCallback((dir: 1 | -1) => {
+    const active = openFiles[activeIdx]?.path;
+    const mru = tabMruRef.current;
+    const idx = active ? mru.indexOf(active) : -1;
+    const next = (idx >= 0 ? mru[idx + dir] : undefined) || mru[0];
+    if (!next) return;
+    const targetIdx = openFiles.findIndex(f => f.path === next);
+    if (targetIdx >= 0) setActiveIdx(targetIdx);
+  }, [openFiles, activeIdx]);
+
   // ==== Keyboard shortcuts (extracted hook) ====
   useKeyboardShortcuts(
     {
@@ -786,35 +737,33 @@ export default function App() {
       setPanelVisible,
       setSplitMode,
       setSettingsOpen,
+      cycleTabs,
     },
     { openFilesCount: openFiles.length, activeIdx, isDebugging },
   );
 
   // ==== Welcome page command listener ====
   useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const cmd = e.detail;
+    const offCmd = onLoomEvent('loom:cmd', (cmd) => {
       if (cmd === 'openFile') openFileFromDisk();
       else if (cmd === 'openFolder') openFolder();
       else if (cmd === 'newFile') createUntitledFile();
       else if (cmd === 'openSettings') setSettingsOpen(true);
       else if (cmd === 'closeFolder') closeWorkspace();
       else if (cmd === 'toggleAI') setAiOpen(p => !p);
-    };
-    window.addEventListener('loom:cmd' as any, handler);
-    const folderHandler = (e: CustomEvent) => {
-      if (typeof e.detail === 'string') openFolderByPath(e.detail);
-    };
-    window.addEventListener('loom:open-folder-path' as any, folderHandler);
-    const saveHandler = (e: CustomEvent) => {
-      if (e.detail?.all) saveAllFiles();
+    });
+    const offFolder = onLoomEvent('loom:open-folder-path', folder => openFolderByPath(folder));
+    const offSave = onLoomEvent('loom:save-file', ({ all }) => {
+      if (all) saveAllFiles();
       else saveFile();
-    };
-    window.addEventListener('loom:save-file' as any, saveHandler);
+    });
+    // CLI / loom:// 协议 / 单实例二次启动：主进程请求打开文件夹
+    const offAppOpen = window.loom?.app?.onOpenFolderRequest?.(folder => openFolderByPath(folder));
     return () => {
-      window.removeEventListener('loom:cmd' as any, handler);
-      window.removeEventListener('loom:open-folder-path' as any, folderHandler);
-      window.removeEventListener('loom:save-file' as any, saveHandler);
+      offCmd();
+      offFolder();
+      offSave();
+      offAppOpen?.();
     };
   }, [openFileFromDisk, openFolder, createUntitledFile, closeWorkspace, openFolderByPath, saveFile, saveAllFiles]);
 
@@ -879,119 +828,56 @@ export default function App() {
   }, [addOrFocusFile]);
 
   // ==== Menus ====
-  const menuItems = React.useMemo(() => [
-    {
-      label: t('menu.file'),
-      items: [
-        { label: t('menu.fileNewFile'), shortcut: 'Ctrl+N', action: createUntitledFile },
-        { label: t('menu.fileOpenFile'), shortcut: 'Ctrl+O', action: openFileFromDisk },
-        { label: t('menu.fileOpenFolder'), shortcut: 'Ctrl+Shift+O', action: openFolder },
-        { label: t('menu.fileCloseFolder'), action: closeWorkspace, disabled: !workspace },
-        { separator: true, label: '' },
-        { label: t('menu.fileSave'), shortcut: 'Ctrl+S', action: saveFile },
-        { label: t('menu.fileSaveAll'), shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
-        { label: t('menu.fileReloadFile'), action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
-        { label: t('menu.fileLocalHistory'), action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
-        { separator: true, label: '' },
-        { label: t('menu.fileCloseTab'), shortcut: 'Ctrl+W', action: () => { if (openFiles.length) closeTab(activeIdx); } },
-        { label: t('menu.fileCloseOthers'), action: () => closeOtherTabs(activeIdx) },
-        { label: t('menu.fileCloseAll'), action: closeAllTabs },
-        { separator: true, label: '' },
-        { label: t('menu.filePreferences'), shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
-        { separator: true, label: '' },
-        { label: t('menu.fileExit'), action: () => window.loom?.window?.close?.() },
-      ],
-    },
-    {
-      label: t('menu.edit'),
-      items: [
-        { label: t('menu.editUndo'), shortcut: 'Ctrl+Z', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'undo' } })); } },
-        { label: t('menu.editRedo'), shortcut: 'Ctrl+Y', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'redo' } })); } },
-        { separator: true, label: '' },
-        { label: t('menu.editFind'), shortcut: 'Ctrl+F', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'find' } })); } },
-        { label: t('menu.editReplace'), shortcut: 'Ctrl+H', action: () => { window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'replace' } })); } },
-        { separator: true, label: '' },
-        { label: t('menu.editFindInFiles'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
-      ],
-    },
-    {
-      label: t('menu.view'),
-      items: [
-        { label: t('menu.viewCommandPalette'), shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
-        { label: t('menu.viewQuickOpen'), shortcut: 'Ctrl+P', action: () => setCmdPalette(true) },
-        { separator: true, label: '' },
-        { label: t('menu.viewExplorer'), shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
-        { label: t('menu.viewSearch'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
-        { label: t('menu.viewSourceControl'), shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
-        { label: t('menu.viewExtensions'), shortcut: 'Ctrl+Shift+X', action: () => setSidebarView('extensions') },
-        { label: t('menu.viewOutline'), action: () => setSidebarView('outline') },
-        { separator: true, label: '' },
-        { label: t('menu.viewTerminal'), shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
-        { label: t('menu.viewToggleSidebar'), shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
-        { label: t('menu.viewSplitEditor'), shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
-        { separator: true, label: '' },
-        { label: t('menu.viewToggleTheme'), action: () => { const next = theme === 'dark' ? 'light' : 'dark'; applyTheme(next); window.loom?.settings?.set?.('theme', next); } },
-      ],
-    },
-    {
-      label: t('menu.run'),
-      items: [
-        { label: t('menu.runStartDebug'), shortcut: 'F5', action: startDebug },
-        { label: t('menu.runRunNoDebug'), shortcut: 'Ctrl+F5', action: runCurrentFile },
-        { label: t('menu.runStopDebug'), shortcut: 'Shift+F5', action: stopDebug },
-      ],
-    },
-    {
-      label: t('menu.help'),
-      items: [
-        { label: t('menu.helpAbout'), action: () => addNotification(t('app.aboutMessage'), 'info', 6000) },
-        { label: t('menu.helpKeymap'), action: () => setSettingsOpen(true) },
-      ],
-    },
-  ], [locale, openFiles, activeIdx, theme, workspace, createUntitledFile, openFileFromDisk, openFolder, closeWorkspace, saveFile, saveAllFiles, closeTab, closeOtherTabs, closeAllTabs, startDebug, stopDebug, applyTheme, addNotification]);
+  // 菜单与命令面板定义已抽到 app-commands.ts（模块化：纯函数 + 依赖注入）
+  const menuItems = React.useMemo(() => buildMenuItems({
+    workspace,
+    openFiles,
+    activeIdx,
+    theme,
+    createUntitledFile,
+    openFileFromDisk,
+    openFolder,
+    closeWorkspace,
+    saveFile,
+    saveAllFiles,
+    closeTab,
+    closeOtherTabs,
+    closeAllTabs,
+    startDebug,
+    stopDebug,
+    runCurrentFile,
+    applyTheme,
+    addNotification,
+    setHistoryTarget,
+    setSettingsOpen,
+    setCmdPalette,
+    setSidebarView,
+    setPanelVisible,
+    setSplitMode,
+  }), [workspace, openFiles, activeIdx, theme, createUntitledFile, openFileFromDisk, openFolder, closeWorkspace, saveFile, saveAllFiles, closeTab, closeOtherTabs, closeAllTabs, startDebug, stopDebug, runCurrentFile, applyTheme, addNotification, setHistoryTarget, setSettingsOpen, setCmdPalette, setSidebarView, setPanelVisible, setSplitMode]);
 
-  const commands = React.useMemo(() => [
-    { id: 'file.open', label: t('command.fileOpen'), shortcut: 'Ctrl+O', action: openFileFromDisk },
-    { id: 'folder.open', label: t('command.folderOpen'), shortcut: 'Ctrl+Shift+O', action: openFolder },
-    { id: 'folder.close', label: t('command.folderClose'), action: closeWorkspace },
-    { id: 'file.new', label: t('command.fileNew'), shortcut: 'Ctrl+N', action: createUntitledFile },
-    { id: 'file.save', label: t('command.fileSave'), shortcut: 'Ctrl+S', action: saveFile },
-    { id: 'file.saveAll', label: t('command.fileSaveAll'), shortcut: 'Ctrl+Shift+S', action: saveAllFiles },
-    { id: 'view.explorer', label: t('command.viewExplorer'), shortcut: 'Ctrl+Shift+E', action: () => setSidebarView('explorer') },
-    { id: 'view.search', label: t('command.viewSearch'), shortcut: 'Ctrl+Shift+F', action: () => setSidebarView('search') },
-    { id: 'view.git', label: t('command.viewGit'), shortcut: 'Ctrl+Shift+G', action: () => setSidebarView('git') },
-    { id: 'view.extensions', label: t('command.viewExtensions'), action: () => setSidebarView('extensions') },
-    { id: 'view.outline', label: t('command.viewOutline'), action: () => setSidebarView('outline') },
-    { id: 'view.terminal', label: t('command.viewTerminal'), shortcut: 'Ctrl+`', action: () => setPanelVisible(p => !p) },
-    { id: 'view.sidebar', label: t('command.viewSidebar'), shortcut: 'Ctrl+B', action: () => setSidebarView(v => v ? '' : 'explorer') },
-    { id: 'view.commandPalette', label: t('command.viewCommandPalette'), shortcut: 'Ctrl+Shift+P', action: () => setCmdPalette(true) },
-    { id: 'view.splitEditor', label: t('command.viewSplitEditor'), shortcut: 'Ctrl+\\', action: () => setSplitMode(p => !p) },
-    { id: 'ai.toggle', label: t('command.aiToggle'), action: () => setAiOpen(p => !p) },
-    { id: 'settings.open', label: t('command.settingsOpen'), shortcut: 'Ctrl+,', action: () => setSettingsOpen(true) },
-    { id: 'theme.dark', label: t('command.themeDark'), action: () => { applyTheme('dark'); window.loom?.settings?.set?.('theme', 'dark'); } },
-    { id: 'theme.light', label: t('command.themeLight'), action: () => { applyTheme('light'); window.loom?.settings?.set?.('theme', 'light'); } },
-    { id: 'theme.system', label: t('command.themeSystem'), action: () => { applyTheme('system'); window.loom?.settings?.set?.('theme', 'system'); } },
-    { id: 'file.revert', label: t('command.fileRevert'), action: () => window.dispatchEvent(new CustomEvent('loom:revert-file')) },
-    { id: 'file.history', label: t('command.fileHistory'), action: () => { const f = openFiles[activeIdx]; if (f?.path) setHistoryTarget(f.path); } },
-    { id: 'editor.format', label: t('command.editorFormat'), shortcut: 'Shift+Alt+F', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'format' } })) },
-    { id: 'editor.comment', label: t('command.editorComment'), shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'toggleComment' } })) },
-    { id: 'debug.run', label: t('command.debugRun'), shortcut: 'Ctrl+F5', action: runCurrentFile },
-    { id: 'workspace.rules', label: t('command.workspaceRules'), action: () => {
-      if (!workspace) { addNotification(t('app.editRulesOpenWorkspaceFirst'), 'warning'); return; }
-      const rulesPath = workspace.replace(/[\\/]/g, '/').replace(/\/$/, '') + '/.loomrules';
-      window.loom.fs.exists(rulesPath).then(async (exists: boolean) => {
-        if (!exists) {
-          const defaultRules = `# Loom IDE Rules
-# Add your project-specific instructions for AI here.
-# These rules are included in every AI chat message.
-`;
-          await window.loom.fs.writeFile(rulesPath, defaultRules);
-        }
-        const content = await window.loom.fs.readFile(rulesPath);
-        addOrFocusFile(rulesPath, content);
-      }).catch(() => addNotification(t('app.editRulesCreateFailed'), 'error'));
-    }},
-  ], [locale, workspace, openFiles, activeIdx, openFileFromDisk, openFolder, closeWorkspace, createUntitledFile, saveFile, saveAllFiles, applyTheme, runCurrentFile, addOrFocusFile, addNotification]);
+  const commands = React.useMemo(() => buildCommands({
+    workspace,
+    openFiles,
+    activeIdx,
+    openFileFromDisk,
+    openFolder,
+    closeWorkspace,
+    createUntitledFile,
+    saveFile,
+    saveAllFiles,
+    runCurrentFile,
+    addOrFocusFile,
+    applyTheme,
+    addNotification,
+    setHistoryTarget,
+    setSettingsOpen,
+    setCmdPalette,
+    setAiOpen,
+    setSidebarView,
+    setPanelVisible,
+    setSplitMode,
+  }), [workspace, openFiles, activeIdx, openFileFromDisk, openFolder, closeWorkspace, createUntitledFile, saveFile, saveAllFiles, runCurrentFile, addOrFocusFile, applyTheme, addNotification, setHistoryTarget, setSettingsOpen, setCmdPalette, setAiOpen, setSidebarView, setPanelVisible, setSplitMode]);
 
   const reorderTabs = useCallback((from: number, to: number) => {
     setOpenFiles(prev => {
@@ -1043,6 +929,41 @@ export default function App() {
   // 仅在变更真正发生时定向刷新（见文件监听 / 重新载入 / 保存中的 setStaleVersion 调用），
   // 不再使用每 2s 的全局重渲染定时器。
   const [, setStaleVersion] = useState(0);
+
+  // ==== 渲染性能：稳定 props（避免每次按键全树重渲染）====
+  // AIAgent 不再每键收到全量文件内容快照：1.2s 防抖后更新，输入过程中
+  // AI 面板不随按键重渲染（文件内容通过 @mention/发送时从磁盘按需读取）。
+  const [aiContextFiles, setAiContextFiles] = useState(
+    () => openFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
+  );
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAiContextFiles(openFiles.map(f => ({ path: f.path, name: f.name, content: f.content })));
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [openFiles]);
+
+  const openFilePaths = useMemo(() => openFiles.map(f => f.path), [openFiles]);
+  const aiPanelOnClose = useCallback(() => setAiOpen(false), []);
+  const aiPanelOnApplyEdit = useCallback((filePath: string, content: string) => {
+    handleContentChange(filePath, content);
+    addOrFocusFile(filePath, content);
+    // 若该文件已在编辑器中打开，强制同步模型内容（Editor 的 memo 比较器
+    // 会忽略 content 变化，因此外部修改必须显式驱动）。
+    emitLoomEvent('loom:editor-set-content', { path: filePath, content });
+  }, [handleContentChange, addOrFocusFile]);
+
+  // ==== F8/Shift+F8：下一个/上一个问题 ====
+  const problemsNavRef = useRef(0);
+  useEffect(() => {
+    return onLoomEvent('loom:problems-next', ({ dir }) => {
+      const d = dir === -1 ? -1 : 1;
+      if (problems.length === 0) return;
+      problemsNavRef.current = (problemsNavRef.current + d + problems.length) % problems.length;
+      const p = problems[problemsNavRef.current];
+      if (p?.file) openFileAndJump(p.file, p.line);
+    });
+  }, [problems, openFileAndJump]);
 
   return (
     <div className="app">
@@ -1116,6 +1037,7 @@ export default function App() {
                   const f = openFiles[idx];
                   if (f?.path) revertFile(f.path);
                 }}
+                onPin={pinFile}
                 locale={locale}
                 staleFiles={staleFilesRef.current}
               />
@@ -1142,7 +1064,7 @@ export default function App() {
                     workspacePath={workspace}
                   />
                 ) : (
-                  <Editor file={activeFile} openFilePaths={openFiles.map(f => f.path)} onContentChange={handleContentChange} workspacePath={workspace} />
+                  <Editor file={activeFile} openFilePaths={openFilePaths} onContentChange={handleContentChange} workspacePath={workspace} />
                 )}
               </ErrorBoundary>
               {isDraggingFile && (
@@ -1188,13 +1110,10 @@ export default function App() {
             <ErrorBoundary name={t('app.aiPanel')}>
               <AIAgent
                 workspacePath={workspace}
-                onClose={() => setAiOpen(false)}
-                openFiles={openFiles.map(f => ({ path: f.path, name: f.name, content: f.content }))}
+                onClose={aiPanelOnClose}
+                openFiles={aiContextFiles}
                 onOpenFile={addOrFocusFile}
-                onApplyEdit={(filePath, content) => {
-                  handleContentChange(filePath, content);
-                  addOrFocusFile(filePath, content);
-                }}
+                onApplyEdit={aiPanelOnApplyEdit}
                 width={aiPanelWidth}
                 locale={locale}
               />

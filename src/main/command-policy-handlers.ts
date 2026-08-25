@@ -4,6 +4,7 @@
  */
 import { ipcMain } from 'electron';
 import { loadConfig, saveConfig } from './config';
+import { isTrustedSender } from './ipc-guard';
 import { getAllowedCommands, getBlockedCommands, reloadCommandPolicy, isInlineInterpreterCodeAllowed, DEFAULT_ALLOWED_COMMANDS, DEFAULT_BLOCKED_COMMANDS } from './command-policy';
 
 export function registerCommandPolicyHandlers() {
@@ -21,7 +22,10 @@ export function registerCommandPolicyHandlers() {
   });
 
   // Replace the allowed list entirely (or pass null to restore defaults).
-  ipcMain.handle('command-policy:setAllowed', (_e: any, commands: string[] | null) => {
+  // SECURITY: mutating the command policy weakens the agent sandbox, so only
+  // the main window's top-level frame (the real Settings UI) may do it.
+  ipcMain.handle('command-policy:setAllowed', (e: any, commands: string[] | null) => {
+    if (!isTrustedSender(e)) return { ok: false, error: 'unauthorized' };
     const cfg = loadConfig();
     if (!cfg.agent) cfg.agent = {};
     if (!cfg.agent.commandPolicy) cfg.agent.commandPolicy = {};
@@ -33,7 +37,8 @@ export function registerCommandPolicyHandlers() {
   });
 
   // Extend (or clear) the extra blocked list appended to the default block.
-  ipcMain.handle('command-policy:setExtraBlocked', (_e: any, commands: string[]) => {
+  ipcMain.handle('command-policy:setExtraBlocked', (e: any, commands: string[]) => {
+    if (!isTrustedSender(e)) return { ok: false, error: 'unauthorized' };
     const cfg = loadConfig();
     if (!cfg.agent) cfg.agent = {};
     if (!cfg.agent.commandPolicy) cfg.agent.commandPolicy = {};
@@ -46,7 +51,8 @@ export function registerCommandPolicyHandlers() {
   // Opt in/out of interpreter inline-code execution (node -e, python -c,
   // powershell -Command, …). Off by default; enabling it is an explicit,
   // security-relevant choice surfaced in settings.
-  ipcMain.handle('command-policy:setAllowInlineInterpreterCode', (_e: any, allow: boolean) => {
+  ipcMain.handle('command-policy:setAllowInlineInterpreterCode', (e: any, allow: boolean) => {
+    if (!isTrustedSender(e)) return { ok: false, error: 'unauthorized' };
     const cfg = loadConfig();
     if (!cfg.agent) cfg.agent = {};
     if (!cfg.agent.commandPolicy) cfg.agent.commandPolicy = {};

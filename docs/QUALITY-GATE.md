@@ -18,10 +18,11 @@
 - `eslint.config.staged.mjs` + `lint-staged`（package.json）：**pre-commit 仅对本次提交改动的文件强制 `any: error`**，从根源阻断新 `any` 流入。
 - React 专属规则（react-hooks / jsx-a11y）受限于沙盒无网络未安装，配置中已留注释说明联网后接入方式。
 
-### 3. Vitest 覆盖率阈值（2026-08-10 校准为真实基线）
-- **此前的问题**：阈值 40/30/40/40 从未被满足（实际 ~15%），且 `@vitest/coverage-v8` 无法解析 JSX/HTML，导致渲染层 TSX 全部 PARSE_ERROR、`npm test -- --coverage` 在 CI 上恒红——门禁形同虚设。
-- **校准**：v8 覆盖率排除 `src/**/*.tsx` 与 `*.html`（v8 无法插桩，须换 istanbul provider 才能覆盖组件，见 Phase 2）；阈值按 2026-08-10 实测下调为 **statements 22 / branches 18 / functions 22 / lines 24**，CI 恢复绿色。
-- **上调机制**：每里程碑 +10pp，直到团队认可目标（60+/50+/60+/60+）；同时评估换 `@vitest/coverage-istanbul` 以纳入渲染层组件覆盖。
+### 3. Vitest 覆盖率阈值（2026-08-14 二次校准：istanbul + TSX 纳入）
+- **历史**：v8 provider 无法插桩 TSX（PARSE_ERROR），渲染层组件长期被排除在覆盖率外。
+- **现状**：切换 `@vitest/coverage-istanbul`（可插桩 TSX），并给 monaco-editor 加 resolve alias 解决 istanbul 解析冲突；**渲染层 TSX 组件已纳入覆盖率统计**。
+- **阈值**（2026-08-14 实测含全部 TSX）：statements 14 / branches 10 / functions 12 / lines 15（留安全余量防 CI 抖动）。当前实测 ~16/12.5/14/17；随组件测试增加，每里程碑上调。
+- **测试规模**：36 个测试文件 / 284 用例（含事件总线、keybindings、多语言索引、插件 worker 隔离、CLI 路径、DAP inspector、agent 纯函数等新增测试）。
 
 ### 4. CI + pre-commit 强制门禁
 - `.github/workflows/quality-gate.yml`：push/PR 到 `main`/`develop` 时执行 `npm ci → npm run lint → npm test -- --coverage`，必须全绿才可合并。

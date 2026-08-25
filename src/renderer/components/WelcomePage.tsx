@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { t } from '@/shared/i18n';
 import { getWelcomeActions, getWelcomeShortcuts } from '../welcome-content';
 import { getLoom } from '../loom-ipc';
+import { emitLoomEvent } from '../loom-events';
 
 interface Props {
   onOpenFile: () => void;
@@ -110,12 +111,12 @@ export default function WelcomePage({
         </div>
 
         <div className="welcome-ai-strip">
-          <button onClick={() => window.dispatchEvent(new CustomEvent('loom:cmd', { detail: 'toggleAI' }))}>
+          <button onClick={() => emitLoomEvent('loom:cmd', 'toggleAI')}>
             <span className="welcome-dot" />
             {t('welcome.openAgent')}
             <kbd>Ctrl+L</kbd>
           </button>
-          <button onClick={() => window.dispatchEvent(new CustomEvent('loom:editor-action', { detail: { action: 'inlineAI' } }))}>
+          <button onClick={() => emitLoomEvent('loom:editor-action', { action: 'inlineAI' })}>
             {t('welcome.inlineEdit')}
             <kbd>Ctrl+K</kbd>
           </button>
