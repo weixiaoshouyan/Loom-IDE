@@ -6,6 +6,7 @@
  * 出问题可直接定位到具体函数。
  */
 import { getLocale } from '@/shared/i18n';
+import { readJSON, writeJSON } from './storage';
 
 // ---- 消息类型（与 AIAgent.tsx 保持一致的最小视图）----
 
@@ -128,18 +129,12 @@ export const CHAT_HISTORY_KEY = 'loom:ai-chat-history';
 export const CHAT_HISTORY_MAX = 40;
 
 export function loadChatSessions<T>(): T[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.slice(0, CHAT_HISTORY_MAX) : [];
-  } catch {
-    return [];
-  }
+  const parsed = readJSON<unknown>(CHAT_HISTORY_KEY, []);
+  return Array.isArray(parsed) ? (parsed as T[]).slice(0, CHAT_HISTORY_MAX) : [];
 }
 
 export function saveChatSessions<T>(sessions: T[]) {
-  try {
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(sessions.slice(0, CHAT_HISTORY_MAX)));
-  } catch { /* quota exceeded — ignore */ }
+  writeJSON(CHAT_HISTORY_KEY, sessions.slice(0, CHAT_HISTORY_MAX));
 }
 
 // ---- 工具函数 ----

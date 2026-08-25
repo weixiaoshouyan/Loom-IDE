@@ -30,6 +30,10 @@ function normalizeEOL(s: string): string {
 // Monaco's built-in TypeScript language service is the same engine used by
 // VS Code. Here we load the workspace tsconfig.json and node_modules/@types
 // to provide project-aware diagnostics, hover, completion, and navigation.
+// Extra libs from a previous workspace are disposed before re-adding, so
+// switching workspaces doesn't accumulate stale @types declarations.
+let workspaceExtraLibs: { ts: monaco.IDisposable; js: monaco.IDisposable }[] = [];
+
 async function configureTypeScriptWorkspace(workspacePath: string): Promise<void> {
   try {
     const loom = window.loom;
@@ -60,6 +64,11 @@ async function configureTypeScriptWorkspace(workspacePath: string): Promise<void
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
     monaco.languages.typescript.javascriptDefaults.setCompilerOptions(compilerOptions);
 
+    for (const lib of workspaceExtraLibs) {
+      try { lib.ts.dispose(); lib.js.dispose(); } catch { /* already disposed */ }
+    }
+    workspaceExtraLibs = [];
+
     // Load ambient types from node_modules/@types
     const typesDir = `${workspacePath}/node_modules/@types`;
     try {
@@ -71,8 +80,11 @@ async function configureTypeScriptWorkspace(workspacePath: string): Promise<void
           for (const f of pkgFiles) {
             if (f.name.endsWith('.d.ts')) {
               const content = await loom.fs.readFile(`${typesDir}/${pkg.name}/${f.name}`);
-              monaco.languages.typescript.typescriptDefaults.addExtraLib(content, `file://${typesDir}/${pkg.name}/${f.name}`);
-              monaco.languages.typescript.javascriptDefaults.addExtraLib(content, `file://${typesDir}/${pkg.name}/${f.name}`);
+              const uri = `file://${typesDir}/${pkg.name}/${f.name}`;
+              workspaceExtraLibs.push({
+                ts: monaco.languages.typescript.typescriptDefaults.addExtraLib(content, uri),
+                js: monaco.languages.typescript.javascriptDefaults.addExtraLib(content, uri),
+              });
             }
           }
         } catch {
@@ -260,37 +272,8 @@ monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
   allowJs: true,
   checkJs: false,
 });
-
-// === Register additional language aliases for better detection ===
-// Monaco ships these out of the box, but we make sure they're associated
-// with the existing language services.
-const LANG_ALIASES: Record<string, string> = {
-  vue: 'html', svelte: 'html', astro: 'html',
-  jsx: 'javascript', tsx: 'typescript', mjs: 'javascript', cjs: 'javascript',
-  mts: 'typescript', cts: 'typescript',
-  scss: 'css', sass: 'css', less: 'css',
-  styl: 'css',
-  yml: 'yaml',
-  conf: 'ini', cfg: 'ini', properties: 'properties',
-  toml: 'ini',
-  htm: 'html', xhtml: 'html', svg: 'xml',
-  sh: 'shell', bash: 'shell', zsh: 'shell',
-  ps1: 'shell', bat: 'shell', cmd: 'shell',
-  r: 'r', R: 'r',
-  kt: 'java', kts: 'java',
-  dart: 'java',
-  swift: 'java',
-  ex: 'plaintext', exs: 'plaintext', erl: 'plaintext', hrl: 'plaintext',
-  vue2: 'html',
-  wasm: 'plaintext',
-};
-for (const [ext, lang] of Object.entries(LANG_ALIASES)) {
-  // Best-effort; Monaco accepts this through configuration
-  try { (monaco.languages as any).getLanguages?.(); } catch {}
-}
-// Note: monaco picks up language from file extension automatically. The LANG_ALIASES
-// map above is kept for documentation; explicit registration of these aliases is
-// already handled by Monaco's built-in language packs and by our compiler setup.
+// Note: Monaco picks up language from the file extension automatically via its
+// built-in language packs; no manual alias registration is needed here.
 
 // === Built-in snippets (cursor/VSCode-style) ===
 const SNIPPETS: { language: string; label: string; body: string; description?: string }[] = [

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { t } from '@/shared/i18n';
 import { emitLoomEvent } from '../loom-events';
+import { readJSON, writeJSON } from '../storage';
+import { SESSION_STORAGE } from '../app-storage';
 
 interface Command {
   id: string;
@@ -77,24 +79,30 @@ function fuzzyScore(query: string, target: string): number {
 const MRU_KEY = 'loom-cmd-palette-mru-v1';
 const MRU_MAX = 20;
 interface MRU { commands: string[]; files: string[]; }
-function loadMRU(): MRU {
-  try {
-    const m = JSON.parse(localStorage.getItem(MRU_KEY) || '');
-    if (m && Array.isArray(m.commands) && Array.isArray(m.files)) return m;
-  } catch {}
-  return { commands: [], files: [] };
+// Module-level cache: ranking reads MRU once per query instead of once per
+// item; recordMRU refreshes the cache after each write.
+let mruCache: MRU | null = null;
+function getMRU(): MRU {
+  if (!mruCache) {
+    const m = readJSON<Partial<MRU> | null>(MRU_KEY, null);
+    mruCache = (m && Array.isArray(m.commands) && Array.isArray(m.files))
+      ? m as MRU
+      : { commands: [], files: [] };
+  }
+  return mruCache;
 }
 function saveMRU(m: MRU) {
-  try { localStorage.setItem(MRU_KEY, JSON.stringify(m)); } catch {}
+  mruCache = m;
+  writeJSON(MRU_KEY, m);
 }
 function recordMRU(type: 'command' | 'file', id: string) {
-  const m = loadMRU();
+  const prev = getMRU();
   const key = type === 'command' ? 'commands' : 'files';
-  m[key] = [id, ...m[key].filter(x => x !== id)].slice(0, MRU_MAX);
+  const m: MRU = { ...prev, [key]: [id, ...prev[key].filter(x => x !== id)].slice(0, MRU_MAX) };
   saveMRU(m);
 }
 function mruRank(type: 'command' | 'file', id: string): number {
-  const m = loadMRU();
+  const m = getMRU();
   const key = type === 'command' ? 'commands' : 'files';
   const idx = m[key].indexOf(id);
   return idx === -1 ? 0 : (m[key].length - idx); // 越近用越大，加到 score 上做 tie-breaker
@@ -135,12 +143,10 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
   // Load recent files (open tabs from session) + plugin commands
   useEffect(() => {
     if (visible) {
-      try {
-        const session = JSON.parse(localStorage.getItem('loom-session-v1') || 'null');
-        if (session?.openFiles) {
-          setRecentFiles(session.openFiles.map((f: any) => f.path).filter((p: string) => !p.startsWith('untitled-')));
-        }
-      } catch {}
+      const session = readJSON<{ openFiles?: { path?: string }[] } | null>(SESSION_STORAGE, null);
+      if (session?.openFiles) {
+        setRecentFiles(session.openFiles.map((f: any) => f.path).filter((p: string) => !p.startsWith('untitled-')));
+      }
       window.loom?.plugins?.getCommands?.().then((cmds: any[]) => setPluginCommands(cmds || [])).catch(() => {});
     }
   }, [visible]);
@@ -196,7 +202,7 @@ export default function CommandPalette({ visible, commands, onClose, workspacePa
     if (isCommandMode || isSymbolMode || !visible) { setFileResults([]); return; }
     if (!debouncedSearch) {
       // Show recent files + MRU
-      const mruFiles = loadMRU().files;
+      const mruFiles = getMRU().files;
       const recents = (mruFiles.length > 0 ? mruFiles : recentFiles).slice(0, 10).map((p, idx) => ({
         path: p,
         name: p.split(/[\\/]/).pop() || p,

@@ -77,8 +77,9 @@ tests/e2e/      # Playwright 端到端测试
 
 ## ✅ 质量保障
 
-- **CI 双门禁**：`quality-gate`（lint + typecheck + 覆盖率阈值）+ `ci`（构建 + e2e）
+- **CI 单流水线双 job**：`quality`（lint + typecheck + 覆盖率阈值）+ `e2e-windows`（构建 + e2e）
 - 覆盖率阈值按真实基线校准并持续上调；pre-commit 阻断新增 `any` 与 lint 错误
+- i18n 键完整性测试保证中英语言表结构一致、无漏网硬编码键
 - 安全审计日志（audit.jsonl）记录 Agent 工具调用与异常，可追溯
 
 ## 📜 License

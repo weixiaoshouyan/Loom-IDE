@@ -22,6 +22,7 @@
     "start": "electron .",
     "lint:staged": "eslint --config config/eslint.config.staged.mjs --fix",
     "lint:any-count": "node scripts/count-eslint-any.mjs",
+    "lint:any-ratchet": "node scripts/any-ratchet.mjs",
     "quality": "npm run lint && npm test"
   },
   "dependencies": {
@@ -120,6 +121,26 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Loom IDE"
+    },
+    "mac": {
+      "icon": "resources/icon.png",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "resources/icon.png",
+      "category": "Development",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ]
     }
   },
   "lint-staged": {
@@ -134,5 +155,6 @@
     "tree-sitter-go@0.23.4": true,
     "tree-sitter-python@0.23.6": true,
     "tree-sitter-rust@0.23.3": true
-  }
+  },
+  "anyBaseline": 493
 }

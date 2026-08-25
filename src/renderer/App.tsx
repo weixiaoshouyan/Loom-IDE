@@ -38,6 +38,12 @@ export interface OpenFile {
    */
   isPreview?: boolean;
   /**
+   * Incrementally-maintained dirty flag (content !== originalContent), updated
+   * at mutation points so render-path checks stay O(1) per file instead of
+   * doing a full string comparison on every keystroke.
+   */
+  dirty?: boolean;
+  /**
    * Set when the session restore truncated this file's content to fit in
    * localStorage. Saving truncated content would permanently destroy the
    * on-disk file, so saveFile/saveAllFiles refuse to write while this is set.
@@ -46,8 +52,8 @@ export interface OpenFile {
 }
 
 export default function App() {
-  const layout = loadLayout();
-  const panelState = loadPanelState();
+  const [layout] = useState(loadLayout);
+  const [panelState] = useState(loadPanelState);
   // 会话改为异步恢复（磁盘存储）：首帧先空，挂载后 loadSession() 填充
   const sessionRef = useRef<{ openFiles: OpenFile[]; activeIdx: number; workspace: string } | null>(null);
 
@@ -164,7 +170,7 @@ export default function App() {
     try {
       const fresh = await window.loom.fs.readFile(filePath);
       setOpenFiles(prev => prev.map(f => f.path === filePath
-        ? { ...f, content: fresh, originalContent: fresh }
+        ? { ...f, content: fresh, originalContent: fresh, dirty: false }
         : f));
       staleFilesRef.current.delete(filePath);
       setStaleVersion(v => v + 1);
@@ -307,7 +313,7 @@ export default function App() {
           content: f.content,
           language: detectLang(f.path),
           originalContent: f.content,
-        });
+          dirty: false,        });
       }
       if (toAdd.length > 0) {
         const merged = [...currentOpen, ...toAdd];
@@ -415,7 +421,7 @@ export default function App() {
       if (f.path !== filePath) return f;
       // 开始编辑预览标签 → 自动钉住（转为正式标签），与 VS Code 一致
       const willDirty = isFileDirty(newContent, f.originalContent);
-      return { ...f, content: newContent, isPreview: f.isPreview && !willDirty ? true : false };
+      return { ...f, content: newContent, dirty: willDirty, isPreview: f.isPreview && !willDirty ? true : false };
     }));
   }, []);
 
@@ -444,7 +450,7 @@ export default function App() {
         const newName = newPath.split(/[/\\]/).pop() || newPath;
         await window.loom.fs.writeFile(newPath, f.content);
         setOpenFiles(prev => prev.map(x => x === f
-          ? { ...x, path: newPath, name: newName, originalContent: f.content, isPreview: false }
+          ? { ...x, path: newPath, name: newName, originalContent: f.content, dirty: false, isPreview: false }
           : x));
         setSelectedFile(newPath);
         addNotification(t('app.fileSaved', { file: newName }), 'success');
@@ -461,7 +467,7 @@ export default function App() {
         return;
       }
       await window.loom.fs.writeFile(f.path, f.content);
-      setOpenFiles(prev => prev.map(x => x === f ? { ...x, originalContent: f.content, isPreview: false } : x));
+      setOpenFiles(prev => prev.map(x => x === f ? { ...x, originalContent: f.content, dirty: false, isPreview: false } : x));
       staleFilesRef.current.delete(f.path);
       // 记录保存时间戳，让 watcher 在 1.5s 内忽略该路径的 stale 标记
       recentlySavedRef.current.set(f.path, Date.now());
@@ -497,7 +503,7 @@ export default function App() {
           const newPath = result.filePath;
           const newName = newPath.split(/[/\\]/).pop() || newPath;
           setOpenFiles(prev => prev.map(x => x === f
-            ? { ...x, path: newPath, name: newName, originalContent: f.content }
+            ? { ...x, path: newPath, name: newName, originalContent: f.content, dirty: false }
             : x));
           saved.push(newPath);
         } else {
@@ -510,7 +516,7 @@ export default function App() {
     }
     // Single update pass: mark successfully-saved files as not-dirty
     if (saved.length > 0) {
-      setOpenFiles(prev => prev.map(f => saved.includes(f.path) ? { ...f, originalContent: f.content } : f));
+      setOpenFiles(prev => prev.map(f => saved.includes(f.path) ? { ...f, originalContent: f.content, dirty: false } : f));
       // 记录保存时间戳，让 watcher 在 1.5s 内忽略这些路径的 stale 标记
       const now = Date.now();
       saved.forEach(p => recentlySavedRef.current.set(p, now));
@@ -522,9 +528,9 @@ export default function App() {
     }
   }, [openFiles, addNotification]);
 
-  const addOutput = (msg: string) => {
+  const addOutput = useCallback((msg: string) => {
     setOutputLines(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-  };
+  }, []);
 
   // ==== Debugger ====
   const startDebug = useCallback(async () => {
@@ -923,8 +929,12 @@ export default function App() {
   }, [splitMode, openFiles.length, splitIdx]);
 
   const activeFile = openFiles[activeIdx] || null;
-  const hasDirty = openFiles.some(f => isFileDirty(f.content, f.originalContent));
-  const hasStale = openFiles.some(f => staleFilesRef.current.has(f.path));
+  // O(1)-per-file dirty check: relies on the incrementally-maintained `dirty`
+  // flag; files whose flag was never set fall back to the full comparison.
+  const hasDirty = useMemo(
+    () => openFiles.some(f => f.dirty === true || (f.dirty === undefined && isFileDirty(f.content, f.originalContent))),
+    [openFiles],
+  );
   // Provide a way for child components to know if the active file is stale.
   // 仅在变更真正发生时定向刷新（见文件监听 / 重新载入 / 保存中的 setStaleVersion 调用），
   // 不再使用每 2s 的全局重渲染定时器。
@@ -933,12 +943,22 @@ export default function App() {
   // ==== 渲染性能：稳定 props（避免每次按键全树重渲染）====
   // AIAgent 不再每键收到全量文件内容快照：1.2s 防抖后更新，输入过程中
   // AI 面板不随按键重渲染（文件内容通过 @mention/发送时从磁盘按需读取）。
+  // 未变化的文件保留旧对象引用，避免无谓的分配与下游 memo 失效。
   const [aiContextFiles, setAiContextFiles] = useState(
     () => openFiles.map(f => ({ path: f.path, name: f.name, content: f.content })),
   );
   useEffect(() => {
     const timer = setTimeout(() => {
-      setAiContextFiles(openFiles.map(f => ({ path: f.path, name: f.name, content: f.content })));
+      setAiContextFiles(prev => {
+        let changed = false;
+        const next = openFiles.map((f, i) => {
+          const p = prev[i];
+          if (p && p.path === f.path && p.name === f.name && p.content === f.content) return p;
+          changed = true;
+          return { path: f.path, name: f.name, content: f.content };
+        });
+        return changed ? next : prev;
+      });
     }, 1200);
     return () => clearTimeout(timer);
   }, [openFiles]);
@@ -967,14 +987,16 @@ export default function App() {
 
   return (
     <div className="app">
-      <TitleBar
-        title={
-          activeFile
-            ? (activeFile.name + (hasDirty ? ' ●' : '') + (staleFilesRef.current.has(activeFile.path) ? ' ⟳' : '') + ' - Loom IDE')
-            : 'Loom IDE'
-        }
-        menuItems={menuItems}
-      />
+      <ErrorBoundary name="TitleBar">
+        <TitleBar
+          title={
+            activeFile
+              ? (activeFile.name + (hasDirty ? ' ●' : '') + (staleFilesRef.current.has(activeFile.path) ? ' ⟳' : '') + ' - Loom IDE')
+              : 'Loom IDE'
+          }
+          menuItems={menuItems}
+        />
+      </ErrorBoundary>
       <div className="main-layout">
         <ActivityBar
           activeView={sidebarView}
@@ -1121,44 +1143,54 @@ export default function App() {
           </div>
         )}
       </div>
-      <StatusBar
-        workspacePath={workspace}
-        activeFile={activeFile}
-        agentStatus={agentStatus}
-        aiMode={aiMode}
-        orcaOnline={orcaOnline}
-        theme={theme}
-        onThemeChange={(t) => { applyTheme(t); window.loom?.settings?.set?.('theme', t); }}
-        locale={locale}
-        gitBranch={gitBranch}
-        rulesActive={!!workspaceRules}
-      />
-      <CommandPalette
-        visible={cmdPalette}
-        commands={commands}
-        onClose={() => setCmdPalette(false)}
-        workspacePath={workspace}
-        onOpenFile={addOrFocusFile}
-      />
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} locale={locale} />}
+      <ErrorBoundary name="StatusBar">
+        <StatusBar
+          workspacePath={workspace}
+          activeFile={activeFile}
+          agentStatus={agentStatus}
+          aiMode={aiMode}
+          orcaOnline={orcaOnline}
+          theme={theme}
+          onThemeChange={(t) => { applyTheme(t); window.loom?.settings?.set?.('theme', t); }}
+          locale={locale}
+          gitBranch={gitBranch}
+          rulesActive={!!workspaceRules}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary name="CommandPalette">
+        <CommandPalette
+          visible={cmdPalette}
+          commands={commands}
+          onClose={() => setCmdPalette(false)}
+          workspacePath={workspace}
+          onOpenFile={addOrFocusFile}
+        />
+      </ErrorBoundary>
+      {settingsOpen && (
+        <ErrorBoundary name="Settings">
+          <Settings onClose={() => setSettingsOpen(false)} locale={locale} />
+        </ErrorBoundary>
+      )}
       <NotificationContainer notifications={notifications} onDismiss={dismissNotification} />
       <ConfirmModal />
       {historyTarget && (
-        <LocalHistory
-          filePath={historyTarget}
-          onClose={() => setHistoryTarget(null)}
-          onRestore={async (content) => {
-            // Apply snapshot content to the editor via the active file
-            const f = openFiles[activeIdx];
-            if (!f) return;
-            await window.loom?.history?.restore?.(f.path, content);
-            handleContentChange(f.path, content);
-            // Mark as dirty so user can save (or save directly)
-            await saveFile();
-            setHistoryTarget(null);
-          }}
-          locale={locale}
-        />
+        <ErrorBoundary name="LocalHistory">
+          <LocalHistory
+            filePath={historyTarget}
+            onClose={() => setHistoryTarget(null)}
+            onRestore={async (content) => {
+              // Apply snapshot content to the editor via the active file
+              const f = openFiles[activeIdx];
+              if (!f) return;
+              await window.loom?.history?.restore?.(f.path, content);
+              handleContentChange(f.path, content);
+              // Mark as dirty so user can save (or save directly)
+              await saveFile();
+              setHistoryTarget(null);
+            }}
+            locale={locale}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );

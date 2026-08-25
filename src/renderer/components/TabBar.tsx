@@ -77,7 +77,7 @@ function TabBar({ files, activeIdx, onSelect, onClose, onCloseAll, onCloseOthers
       <div className="tab-bar-wrapper">
         <div className="tabs-container" ref={containerRef} role="tablist" aria-label={t('tabs.editorTabs')}>
           {files.map((f, i) => {
-            const dirty = isFileDirty(f.content, f.originalContent);
+            const dirty = f.dirty === true || (f.dirty === undefined && isFileDirty(f.content, f.originalContent));
             const isDragOver = dragOverIdx === i;
             const isStale = !!staleFiles?.has(f.path);
             const icon = getFileIcon(f.name, false, false);

@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { t } from '@/shared/i18n';
+import { readJSON, writeJSON } from '../storage';
 import { confirmDialog } from './ConfirmModal';
 
 interface Snippet {
@@ -236,18 +237,11 @@ const BUILTIN_SNIPPETS: Snippet[] = [
 const STORAGE_KEY = 'loom-snippets-v1';
 
 function loadCustomSnippets(): Snippet[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return readJSON<Snippet[]>(STORAGE_KEY, []);
 }
 
 function saveCustomSnippets(snippets: Snippet[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snippets));
-  } catch { /* storage full or unavailable */ }
+  writeJSON(STORAGE_KEY, snippets);
 }
 
 export default function SnippetManager({ onClose, onInsert, currentLanguage, locale = 'zh-CN' }: Props) {

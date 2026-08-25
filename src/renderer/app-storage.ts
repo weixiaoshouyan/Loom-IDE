@@ -1,5 +1,6 @@
 import { inferWorkspaceFromOpenFiles } from './workspace-state';
 import type { OpenFile } from './App';
+import { readJSON, writeJSON } from './storage';
 
 export const extMap: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
@@ -22,47 +23,34 @@ export function detectLang(filename: string): string {
 
 const LAYOUT_STORAGE = 'loom-layout-v1';
 const PANEL_STATE_STORAGE = 'loom-panel-state-v1';
-const SESSION_STORAGE = 'loom-session-v1';
+export const SESSION_STORAGE = 'loom-session-v1';
+
+const DEFAULT_LAYOUT: SavedLayout = { sidebarWidth: 260, panelHeight: 240, activeView: 'explorer', aiPanelWidth: 420, splitMode: false, splitRatio: 50, splitIdx: 0 };
 
 export interface SavedLayout { sidebarWidth: number; panelHeight: number; activeView: string; aiPanelWidth: number; splitMode?: boolean; splitRatio?: number; splitIdx?: number; }
 
 export function loadLayout(): SavedLayout {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(LAYOUT_STORAGE) || 'null');
-    return { sidebarWidth: 260, panelHeight: 240, activeView: 'explorer', aiPanelWidth: 420, splitMode: false, splitRatio: 50, splitIdx: 0, ...(parsed || {}) };
-  } catch {
-    return { sidebarWidth: 260, panelHeight: 240, activeView: 'explorer', aiPanelWidth: 420, splitMode: false, splitRatio: 50, splitIdx: 0 };
-  }
+  return { ...DEFAULT_LAYOUT, ...readJSON<Partial<SavedLayout>>(LAYOUT_STORAGE, {}) };
 }
 export function saveLayout(layout: SavedLayout) {
-  try { localStorage.setItem(LAYOUT_STORAGE, JSON.stringify(layout)); } catch {}
+  writeJSON(LAYOUT_STORAGE, layout);
 }
 
 export function loadPanelState(): { visible: boolean } {
-  try {
-    return JSON.parse(localStorage.getItem(PANEL_STATE_STORAGE) || 'null') || { visible: false };
-  } catch {
-    return { visible: false };
-  }
+  return readJSON(PANEL_STATE_STORAGE, { visible: false });
 }
 export function savePanelState(s: { visible: boolean }) {
-  try { localStorage.setItem(PANEL_STATE_STORAGE, JSON.stringify(s)); } catch {}
+  writeJSON(PANEL_STATE_STORAGE, s);
 }
 
 /** 同步读 localStorage 会话（启动首帧降级用；正常路径走异步磁盘版）。 */
 function loadSessionSync(): { openFiles: OpenFile[]; activeIdx: number; workspace: string } | null {
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.openFiles)) return null;
-    return {
-      ...parsed,
-      workspace: parsed.workspace || inferWorkspaceFromOpenFiles(parsed.openFiles),
-    };
-  } catch {
-    return null;
-  }
+  const parsed = readJSON<{ openFiles?: OpenFile[]; workspace?: string } | null>(SESSION_STORAGE, null);
+  if (!parsed || !Array.isArray(parsed.openFiles)) return null;
+  return {
+    ...(parsed as { openFiles: OpenFile[]; activeIdx: number; workspace: string }),
+    workspace: parsed.workspace || inferWorkspaceFromOpenFiles(parsed.openFiles),
+  };
 }
 
 /**
@@ -110,5 +98,5 @@ export async function saveSession(s: { openFiles: OpenFile[]; activeIdx: number;
     const res = await window.loom?.session?.save?.(compact) as { ok?: boolean } | undefined;
     if (res?.ok) return;
   } catch { /* fall through to localStorage */ }
-  try { localStorage.setItem(SESSION_STORAGE, JSON.stringify(compact)); } catch { /* quota exceeded — ignore */ }
+  writeJSON(SESSION_STORAGE, compact);
 }

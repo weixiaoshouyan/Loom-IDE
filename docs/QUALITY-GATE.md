@@ -25,9 +25,9 @@
 - **测试规模**：36 个测试文件 / 284 用例（含事件总线、keybindings、多语言索引、插件 worker 隔离、CLI 路径、DAP inspector、agent 纯函数等新增测试）。
 
 ### 4. CI + pre-commit 强制门禁
-- `.github/workflows/quality-gate.yml`：push/PR 到 `main`/`develop` 时执行 `npm ci → npm run lint → npm test -- --coverage`，必须全绿才可合并。
-- `.github/workflows/ci.yml`：tsc ×2 + eslint + vitest + 构建 + Playwright e2e（冒烟 + 工作流）。
+- `.github/workflows/ci.yml`：单一流水线两个 job——`quality`（ubuntu：lint + 双 tsc + 覆盖率测试）与 `e2e-windows`（windows：构建 + Playwright e2e）。必须全绿才可合并。
 - `.husky/pre-commit`：提交时运行 `npx lint-staged`（阻断新 `any` 与真实 lint error）。
+- i18n 键完整性：`src/shared/i18n/i18n-coverage.test.ts` 在单测中校验两份语言表键结构一致、渲染层所用 `t()`/`tk()` 键全部存在。
 
 ## 二、门禁当前真实状态（2026-08-10 实测）
 

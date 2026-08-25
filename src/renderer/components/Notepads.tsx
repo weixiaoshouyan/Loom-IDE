@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { readJSON, writeJSON } from '../storage';
 import { confirmDialog } from './ConfirmModal';
 
 interface Note {
@@ -27,16 +28,11 @@ function getStorageKey(workspace: string): string {
 }
 
 function loadNotes(workspace: string): Note[] {
-  try {
-    const data = localStorage.getItem(getStorageKey(workspace));
-    return data ? JSON.parse(data) : [];
-  } catch { return []; }
+  return readJSON<Note[]>(getStorageKey(workspace), []);
 }
 
 function saveNotes(workspace: string, notes: Note[]) {
-  try {
-    localStorage.setItem(getStorageKey(workspace), JSON.stringify(notes));
-  } catch {}
+  writeJSON(getStorageKey(workspace), notes);
 }
 
 export default function Notepads({ workspacePath, locale = 'zh-CN' }: Props) {
