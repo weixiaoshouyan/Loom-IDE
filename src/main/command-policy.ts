@@ -98,7 +98,7 @@ const POWERSHELL_INTERPRETERS = new Set(['powershell', 'pwsh']);
 function isPowerShellInlineFlag(arg: string): boolean {
   const m = /^-{1,2}([a-z]+)$/i.exec(arg.trim());
   if (!m) return false;
-  const name = m[1].toLowerCase();
+  const name = m[1]!.toLowerCase();
   return 'command'.startsWith(name) || 'encodedcommand'.startsWith(name);
 }
 

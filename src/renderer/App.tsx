@@ -320,7 +320,7 @@ export default function App() {
         const newIdx = merged.length - 1;
         queueMicrotask(() => {
           setActiveIdx(newIdx);
-          setSelectedFile(toAdd[toAdd.length - 1].path);
+          setSelectedFile(toAdd[toAdd.length - 1]!.path);
         });
         return merged;
       } else if (focused >= 0) {
@@ -889,7 +889,7 @@ export default function App() {
     setOpenFiles(prev => {
       const arr = [...prev];
       const [item] = arr.splice(from, 1);
-      arr.splice(to, 0, item);
+      arr.splice(to, 0, item!);
       return arr;
     });
     setActiveIdx(prev => {

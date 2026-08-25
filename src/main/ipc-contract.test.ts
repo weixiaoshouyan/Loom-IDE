@@ -59,7 +59,7 @@ function extractChannels(source: string, prefix: RegExp): Set<string> {
   const channels = new Set<string>();
   const pattern = new RegExp(prefix.source + String.raw`\(\s*['"]([^'"]+)['"]`, 'g');
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(source)) !== null) channels.add(match[1]);
+  while ((match = pattern.exec(source)) !== null) channels.add(match[1]!);
   return channels;
 }
 

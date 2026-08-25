@@ -36,7 +36,7 @@ describe('multi-language code index', () => {
     expect(names).toContain('create_user');
     const r = searchCodeIndex(index, 'create_user', 5);
     expect(r.length).toBeGreaterThan(0);
-    expect(r[0].name).toBe('create_user');
+    expect(r[0]!.name).toBe('create_user');
   });
 
   it('indexes Go functions and methods', async () => {

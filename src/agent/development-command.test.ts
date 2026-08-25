@@ -146,8 +146,8 @@ describe('development-command', () => {
     const history = queue.list();
 
     expect(result.exitCode).toBe(0);
-    expect(history[0].status).toBe('succeeded');
-    expect(history[0].history.some(event => event.type === 'stdout')).toBe(true);
+    expect(history[0]!.status).toBe('succeeded');
+    expect(history[0]!.history.some(event => event.type === 'stdout')).toBe(true);
   });
 
   it('retries a finished queued command with the same request', async () => {
@@ -168,6 +168,6 @@ describe('development-command', () => {
     expect(retryResult.exitCode).toBe(0);
     expect(retryResult.stdout).toContain('retry-ok');
     expect(history).toHaveLength(2);
-    expect(history[0].request.args).toEqual([printer, 'retry-ok']);
+    expect(history[0]!.request.args).toEqual([printer, 'retry-ok']);
   });
 });

@@ -35,7 +35,7 @@ export function upsertOpenFile(
   const existing = openFiles.findIndex(f => f.path === filePath);
   if (existing >= 0) {
     const next = [...openFiles];
-    const current = next[existing];
+    const current = next[existing]!;
     const isDirty = isFileDirty(current.content, current.originalContent);
     if (!isDirty && !isFsReadError(content)) {
       next[existing] = {
@@ -104,14 +104,14 @@ export function inferWorkspaceFromOpenFiles(openFiles: OpenFile[]): string {
   if (paths.length === 0) return '';
 
   const directories = paths.map(filePath => filePath.split('/').slice(0, -1));
-  if (directories.length === 1) return directories[0].join('/');
+  if (directories.length === 1) return directories[0]!.join('/');
 
-  const first = directories[0];
+  const first = directories[0]!;
   let end = first.length;
   for (const parts of directories.slice(1)) {
     end = Math.min(end, parts.length);
     for (let i = 0; i < end; i++) {
-      if (first[i].toLowerCase() !== parts[i].toLowerCase()) {
+      if (first[i]!.toLowerCase() !== parts[i]!.toLowerCase()) {
         end = i;
         break;
       }

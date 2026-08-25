@@ -64,7 +64,7 @@ function fuzzyScore(query: string, target: string): number {
       else consecutive = 0;
       score += 10 + consecutive * 5;
       // 词边界（前一个字符是分隔符或开头）
-      if (i === 0 || /[\s\-_./\\]/.test(t[i - 1])) score += 25;
+      if (i === 0 || /[\s\-_./\\]/.test(t[i - 1]!)) score += 25;
       lastIdx = i;
       qi++;
     }

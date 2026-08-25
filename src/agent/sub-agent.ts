@@ -156,7 +156,7 @@ export async function runSubAgent(options: SubAgentOptions): Promise<SubAgentRes
     // Extract short findings from the conversation
     for (const m of messages) {
       if (m.role === 'tool' && m.content && m.content.length < 500) {
-        findings.push(m.content.split('\n')[0].slice(0, 200));
+        findings.push(m.content.split('\n')[0]!.slice(0, 200));
       }
     }
 

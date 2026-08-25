@@ -36,8 +36,8 @@ describe('agent-review-queue', () => {
   it('marks pending items accepted or rejected by id', () => {
     const queue = [item('D:/demo/a.ts'), item('D:/demo/b.ts')];
 
-    expect(acceptReviewItem(queue, 'D:/demo/a.ts')[0].status).toBe('accepted');
-    expect(rejectReviewItem(queue, 'D:/demo/b.ts')[1].status).toBe('rejected');
+    expect(acceptReviewItem(queue, 'D:/demo/a.ts')[0]!.status).toBe('accepted');
+    expect(rejectReviewItem(queue, 'D:/demo/b.ts')[1]!.status).toBe('rejected');
   });
 
   it('summarizes pending, accepted, and rejected counts', () => {

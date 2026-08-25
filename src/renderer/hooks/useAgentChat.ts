@@ -113,7 +113,7 @@ export function useAgentChat(opts: UseAgentChatOptions) {
       if (message.requestId !== requestId) return message;
       const toolCalls = [...(message.toolCalls || [])];
       if (toolCalls.length === 0) return message;
-      toolCalls[toolCalls.length - 1] = { ...toolCalls[toolCalls.length - 1], ...patch };
+      toolCalls[toolCalls.length - 1] = { ...toolCalls[toolCalls.length - 1]!, ...patch };
       return { ...message, toolCalls };
     }));
   }, []);
@@ -269,7 +269,7 @@ export function useAgentChat(opts: UseAgentChatOptions) {
       for (const m of codebaseMentions) {
         const match = m.match(/@codebase\s+([\w./\\-]+)(?::(\d+))?/);
         if (!match) continue;
-        const rel = match[1];
+        const rel = match[1]!;
         const line = match[2] ? parseInt(match[2], 10) : undefined;
         const fullPath = workspacePath ? `${workspacePath}/${rel}`.replace(/\\/g, '/') : rel;
         try {

@@ -40,8 +40,8 @@ function computeDiff(original: string, suggested: string): DiffLine[] {
   const dp: number[][] = Array(m + 1).fill(0).map(() => Array(n + 1).fill(0));
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
-      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      if (a[i - 1] === b[j - 1]) dp[i]![j] = dp[i - 1]![j - 1]! + 1;
+      else dp[i]![j] = Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
     }
   }
   // 回溯
@@ -49,18 +49,18 @@ function computeDiff(original: string, suggested: string): DiffLine[] {
   let i = m, j = n;
   while (i > 0 && j > 0) {
     if (a[i - 1] === b[j - 1]) {
-      lines.unshift({ type: 'same', text: a[i - 1], origIdx: i - 1, newIdx: j - 1 });
+      lines.unshift({ type: 'same', text: a[i - 1]!, origIdx: i - 1, newIdx: j - 1 });
       i--; j--;
-    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
-      lines.unshift({ type: 'del', text: a[i - 1], origIdx: i - 1 });
+    } else if (dp[i - 1]![j]! >= dp[i]![j - 1]!) {
+      lines.unshift({ type: 'del', text: a[i - 1]!, origIdx: i - 1 });
       i--;
     } else {
-      lines.unshift({ type: 'add', text: b[j - 1], newIdx: j - 1 });
+      lines.unshift({ type: 'add', text: b[j - 1]!, newIdx: j - 1 });
       j--;
     }
   }
-  while (i > 0) { lines.unshift({ type: 'del', text: a[i - 1], origIdx: i - 1 }); i--; }
-  while (j > 0) { lines.unshift({ type: 'add', text: b[j - 1], newIdx: j - 1 }); j--; }
+  while (i > 0) { lines.unshift({ type: 'del', text: a[i - 1]!, origIdx: i - 1 }); i--; }
+  while (j > 0) { lines.unshift({ type: 'add', text: b[j - 1]!, newIdx: j - 1 }); j--; }
   return lines;
 }
 
@@ -70,10 +70,10 @@ function buildHunks(diffLines: DiffLine[]): DiffHunk[] {
   const hunks: DiffHunk[] = [];
   let i = 0;
   while (i < diffLines.length) {
-    if (diffLines[i].type === 'same') { i++; continue; }
+    if (diffLines[i]!.type === 'same') { i++; continue; }
     // 进入变更区
     const start = i;
-    while (i < diffLines.length && diffLines[i].type !== 'same') i++;
+    while (i < diffLines.length && diffLines[i]!.type !== 'same') i++;
     hunks.push({ startIdx: start, endIdx: i - 1, accepted: false });
   }
   return hunks;
@@ -178,7 +178,7 @@ Return ONLY the edited code in a single code block with the language marker. Do 
 
   const extractCodeFromResponse = (text: string): string => {
     const match = text.match(/```(?:\w+)?\n?([\s\S]*?)```/);
-    if (match) return match[1].trim();
+    if (match) return match[1]!.trim();
     return text.trim();
   };
 
@@ -222,13 +222,13 @@ Return ONLY the edited code in a single code block with the language marker. Do 
     // 部分接受：按 diff 行重建
     const lines: string[] = [];
     for (let i = 0; i < diffLines.length; i++) {
-      const dl = diffLines[i];
+      const dl = diffLines[i]!;
       // 找到该行所属 hunk
       const hunkIdx = hunks.findIndex(h => i >= h.startIdx && i <= h.endIdx);
       if (hunkIdx === -1) {
         // same 行：直接保留
         lines.push(dl.text);
-      } else if (hunks[hunkIdx].accepted) {
+      } else if (hunks[hunkIdx]!.accepted) {
         // 接受的 hunk：保留 add 行，跳过 del 行
         if (dl.type === 'add') lines.push(dl.text);
       } else {
@@ -377,7 +377,7 @@ Return ONLY the edited code in a single code block with the language marker. Do 
                     const inHunk = hunks.some(h => i >= h.startIdx && i <= h.endIdx);
                     let hunkHeader: React.ReactNode = null;
                     if (inHunk && i === hunks[hunkIdx]?.startIdx) {
-                      const h = hunks[hunkIdx];
+                      const h = hunks[hunkIdx]!;
                       hunkHeader = (
                         <div className="inline-ai-hunk-bar" key={`hunk-${hunkIdx}`}>
                           <button

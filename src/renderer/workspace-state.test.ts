@@ -31,8 +31,8 @@ describe('workspace-state', () => {
     );
 
     expect(result.activeIdx).toBe(0);
-    expect(result.openFiles[0].content).toBe('unsaved edit');
-    expect(result.openFiles[0].originalContent).toBe('original');
+    expect(result.openFiles[0]!.content).toBe('unsaved edit');
+    expect(result.openFiles[0]!.originalContent).toBe('original');
   });
 
   it('clears files, selection, and workspace when closing a folder', () => {

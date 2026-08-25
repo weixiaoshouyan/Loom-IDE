@@ -21,7 +21,7 @@ export function formatMarkdown(text: string): string {
     ];
     for (const pat of filePatterns) {
       const m = code.match(pat);
-      if (m) { filePath = m[1].trim(); break; }
+      if (m) { filePath = m[1]!.trim(); break; }
     }
     const safeFilePath = safeAttr(filePath);
     const fileName = filePath.split(/[\\/]/).pop();
@@ -45,7 +45,7 @@ export function formatMarkdown(text: string): string {
   // Restore the rendered code blocks.
   // NUL 占位符不能写进正则字面量（no-control-regex），动态构造。
   const CODEBLOCK_RE = new RegExp(`\\x00CODEBLOCK(\\d+)\\x00`, 'g');
-  html = html.replace(CODEBLOCK_RE, (_: string, i: string) => codeBlocks[Number(i)]);
+  html = html.replace(CODEBLOCK_RE, (_: string, i: string) => codeBlocks[Number(i)]!);
 
   html = html.replace(/`([^\n`]+)`/g, '<code class="inline-code">$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');

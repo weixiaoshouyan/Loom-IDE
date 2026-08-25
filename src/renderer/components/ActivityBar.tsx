@@ -63,8 +63,8 @@ export default function ActivityBar({ activeView, onViewChange, aiOpen, onToggle
             }}
           >
             {item.icon}
-            {badges[item.id] > 0 && (
-              <span className="activitybar-badge">{badges[item.id] > 99 ? '99+' : badges[item.id]}</span>
+            {(badges[item.id] ?? 0) > 0 && (
+              <span className="activitybar-badge">{(badges[item.id] ?? 0) > 99 ? '99+' : badges[item.id] ?? 0}</span>
             )}
           </div>
         ))}

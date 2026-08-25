@@ -206,7 +206,7 @@ export function registerConversationHandlers() {
         }
         extension = 'md';
       }
-      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]!;
       const saveResult = await dialog.showSaveDialog(win, {
         title: '导出对话',
         defaultPath: `loom-conversation-${projectName}-${timestamp}.${extension}`,

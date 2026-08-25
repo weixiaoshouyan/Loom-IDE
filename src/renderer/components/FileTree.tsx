@@ -297,29 +297,29 @@ export function OutlineView({ filePath, onOpenFile, locale = 'zh-CN', workspaceP
         // 函数/类：支持 export、export default、async 组合
         const funcMatch = trimmed.match(/^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|const|let|var)\s+(\w+)/);
         if (funcMatch) {
-          found.push({ name: funcMatch[2], kind: funcMatch[1] === 'class' ? 'class' : 'function', line: i + 1 });
+          found.push({ name: funcMatch[2]!, kind: funcMatch[1] === 'class' ? 'class' : 'function', line: i + 1 });
         }
         // 导入：支持 import type、默认导入、默认+具名混合、命名空间 import * as X
         if (trimmed.startsWith('import ')) {
           const body = trimmed.replace(/^import\s+(?:type\s+)?/, '');
           const defaultMatch = body.match(/^(\w+)\s*(?:,|from|$)/);
           if (defaultMatch && defaultMatch[1] !== 'from') {
-            found.push({ name: defaultMatch[1], kind: 'module', line: i + 1 });
+            found.push({ name: defaultMatch[1]!, kind: 'module', line: i + 1 });
           }
           const named = body.match(/\{([^}]+)\}/);
           if (named) {
-            named[1].split(',').forEach(n => {
+            named[1]!.split(',').forEach(n => {
               const clean = n.trim().replace(/^type\s+/, '');
               const name = clean.split(/\s+as\s+/).pop()?.trim() || '';
               if (name) found.push({ name, kind: 'module', line: i + 1 });
             });
           }
           const ns = body.match(/\*\s+as\s+(\w+)/);
-          if (ns) found.push({ name: ns[1], kind: 'module', line: i + 1 });
+          if (ns) found.push({ name: ns[1]!, kind: 'module', line: i + 1 });
         }
         const typeMatch = trimmed.match(/^(?:export\s+)?(?:default\s+)?(interface|type|enum)\s+(\w+)/);
         if (typeMatch) {
-          found.push({ name: typeMatch[2], kind: typeMatch[1], line: i + 1 });
+          found.push({ name: typeMatch[2]!, kind: typeMatch[1]!, line: i + 1 });
         }
         // 类方法：允许多个修饰符（如 private async foo()），并过滤控制流关键字
         const methodMatch = trimmed.match(/^((?:public|private|protected|static|async|readonly|override|get|set)\s+)*(\w+)\s*\(/);

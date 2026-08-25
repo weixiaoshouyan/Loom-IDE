@@ -877,7 +877,7 @@ async function executeSearchCode(args: any, context: ToolExecutionContext): Prom
       let output = `Found ${results.length} code symbols for "${args.query}":\n\n`;
       for (const r of results) {
         output += `• ${r.kind} ${r.name} in ${path.relative(context.workspacePath, r.filePath)}:${r.startLine}\n`;
-        if (r.docs) output += `  Docs: ${r.docs.split('\n')[0].slice(0, 120)}\n`;
+        if (r.docs) output += `  Docs: ${r.docs.split('\n')[0]!.slice(0, 120)}\n`;
         output += `  ${r.text.split('\n').slice(0, 3).join('\n  ').slice(0, 300)}\n\n`;
       }
       return output;
@@ -938,9 +938,9 @@ async function executeSearchCode(args: any, context: ToolExecutionContext): Prom
             let matched = false;
             if (regex) {
               regex.lastIndex = 0;
-              matched = regex.test(lines[i]);
+              matched = regex.test(lines[i]!);
             } else {
-              const line = caseSensitive ? lines[i] : lines[i].toLowerCase();
+              const line = caseSensitive ? lines[i]! : lines[i]!.toLowerCase();
               const searchPattern = caseSensitive ? pattern : pattern.toLowerCase();
               matched = line.includes(searchPattern);
             }
@@ -948,7 +948,7 @@ async function executeSearchCode(args: any, context: ToolExecutionContext): Prom
               results.push({
                 file: path.relative(context.workspacePath, fullPath),
                 line: i + 1,
-                content: lines[i].trim().substring(0, 200),
+                content: lines[i]!.trim().substring(0, 200),
               });
               if (results.length >= maxResults) break;
             }
@@ -971,7 +971,7 @@ async function executeSearchCode(args: any, context: ToolExecutionContext): Prom
   const grouped: Record<string, typeof results> = {};
   for (const r of results) {
     if (!grouped[r.file]) grouped[r.file] = [];
-    grouped[r.file].push(r);
+    grouped[r.file]!.push(r);
   }
 
   let output = `Found ${results.length} results for "${pattern}" in ${Object.keys(grouped).length} files (searched ${searched} files):\n\n`;
@@ -1021,7 +1021,7 @@ function executeListFiles(args: any, context: ToolExecutionContext): string {
       });
 
       for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
+        const entry = entries[i]!;
         if (HIDDEN_DIRS.has(entry.name) && depth === 0 && entry.isDirectory()) continue;
         
         const isLast = i === entries.length - 1;
@@ -1197,7 +1197,7 @@ function executeRestoreCheckpoint(args: any, context: ToolExecutionContext): str
       .map(e => e.name)
       .sort();
     if (entries.length === 0) return 'No checkpoint found';
-    const latest = path.join(checkpointsDir, entries[entries.length - 1]);
+    const latest = path.join(checkpointsDir, entries[entries.length - 1]!);
 
     function restoreDir(srcDir: string, destRoot: string) {
       const items = fs.readdirSync(srcDir, { withFileTypes: true });
@@ -1679,7 +1679,7 @@ export function parseToolCalls(text: string): ToolCall[] {
   let match;
   while ((match = regex.exec(text)) !== null) {
     try {
-      const parsed = JSON.parse(match[1].trim());
+      const parsed = JSON.parse(match[1]!.trim());
       calls.push({
         id: 'call_' + Math.random().toString(36).substring(2, 10),
         type: 'function',
@@ -1691,7 +1691,7 @@ export function parseToolCalls(text: string): ToolCall[] {
     } catch (e) {
       // Try parsing as array
       try {
-        const arr = JSON.parse(match[1].trim());
+        const arr = JSON.parse(match[1]!.trim());
         if (Array.isArray(arr)) {
           for (const item of arr) {
             calls.push({
@@ -1747,7 +1747,7 @@ async function executeAnalyzeDependencies(args: any, context: ToolExecutionConte
       const imports: string[] = [];
       let m;
       while ((m = importRegex.exec(content)) !== null) {
-        const specifier = m[1];
+        const specifier = m[1]!;
         if (specifier.startsWith('.') || specifier.startsWith('/')) {
           imports.push(specifier);
         }

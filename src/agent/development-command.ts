@@ -138,7 +138,7 @@ export function parseDevelopmentCommand(commandLine: string): ParsedDevelopmentC
   let quote: '"' | "'" | null = null;
 
   for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i];
+    const ch = trimmed[i]!;
     if ((ch === '"' || ch === "'") && !quote) {
       quote = ch;
       continue;
@@ -162,7 +162,7 @@ export function parseDevelopmentCommand(commandLine: string): ParsedDevelopmentC
   if (parts.length === 0) return { error: 'Command is required.' };
 
   const [command, ...args] = parts;
-  if (!isAllowedDevelopmentCommand(command)) {
+  if (!isAllowedDevelopmentCommand(command!)) {
     return { error: `Command "${command}" is not in the allowed development command list.` };
   }
   return { command, args };

@@ -65,12 +65,12 @@ export function registerGitHandlers() {
       const changes: { status: string; file: string }[] = [];
       for (const line of lines) {
         if (line.startsWith('## ')) {
-          branch = line.slice(3).trim().split('...')[0].split(/\s/)[0].trim() || '';
+          branch = line.slice(3).trim().split('...')[0]!.split(/\s/)[0]!.trim() || '';
           continue;
         }
         const status = line.substring(0, 2);
         let file = line.substring(3).trim();
-        if (file.includes(' -> ')) file = file.split(' -> ')[1];
+        if (file.includes(' -> ')) file = file.split(' -> ')[1]!;
         changes.push({ status, file });
       }
       return { branch, branches: await thisBranchList(cwd), changes };

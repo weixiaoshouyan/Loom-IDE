@@ -73,8 +73,8 @@ describe('SemanticSearch', () => {
     const index = await buildTestIndex();
     const results = semanticSearch(index, { query: 'createUser', topK: 5 });
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].symbol.name).toBe('createUser');
-    expect(results[0].matchType).toBe('name');
+    expect(results[0]!.symbol.name).toBe('createUser');
+    expect(results[0]!.matchType).toBe('name');
   });
 
   it('finds symbols by partial name', async () => {
@@ -105,7 +105,7 @@ describe('SemanticSearch', () => {
     const index = await buildTestIndex();
     const results = semanticSearch(index, { query: 'createUser', includeContext: true });
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].context).toBeDefined();
+    expect(results[0]!.context).toBeDefined();
   });
 
   it('filters by file type', async () => {
@@ -194,7 +194,7 @@ describe('RulesEngine', () => {
     const { text, layers } = engine.resolve();
     expect(text).toContain('TypeScript strict mode');
     expect(layers.length).toBe(1);
-    expect(layers[0].source).toBe('project');
+    expect(layers[0]!.source).toBe('project');
   });
 
   it('loads pattern-based rules', () => {
@@ -225,7 +225,7 @@ describe('RulesEngine', () => {
     const engine = new RulesEngine(tmpDir);
     engine.addLayer({ id: 'team', name: 'Team', content: 'Team rule.', source: 'team', priority: 200 });
     const { layers } = engine.resolve();
-    expect(layers[0].source).toBe('team'); // higher priority first
+    expect(layers[0]!.source).toBe('team'); // higher priority first
   });
 
   it('generates prompt section', () => {
@@ -353,7 +353,7 @@ describe('SessionManager', () => {
     mgr.addRound(session, 2, [{ role: 'assistant', content: 'hi', timestamp: Date.now() }], []);
     const msgs = mgr.getConversationUpToRound(session, 1);
     expect(msgs.length).toBe(1);
-    expect(msgs[0].content).toBe('hello');
+    expect(msgs[0]!.content).toBe('hello');
   });
 
   it('searches sessions by title', () => {
@@ -361,7 +361,7 @@ describe('SessionManager', () => {
     mgr.save(mgr.createSession('Add new feature', tmpDir));
     const results = mgr.search('authentication');
     expect(results.length).toBe(1);
-    expect(results[0].title).toContain('authentication');
+    expect(results[0]!.title).toContain('authentication');
   });
 
   it('deletes sessions', () => {
@@ -383,14 +383,14 @@ describe('McpMarketplace', () => {
     const servers = marketplace.getAll();
     expect(servers.length).toBeGreaterThan(0);
     for (let i = 1; i < servers.length; i++) {
-      expect(servers[i - 1].popularity).toBeGreaterThanOrEqual(servers[i].popularity);
+      expect(servers[i - 1]!.popularity).toBeGreaterThanOrEqual(servers[i]!.popularity);
     }
   });
 
   it('searches servers by name', () => {
     const results = marketplace.search('GitHub');
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].name).toBe('GitHub');
+    expect(results[0]!.name).toBe('GitHub');
   });
 
   it('searches servers by description', () => {

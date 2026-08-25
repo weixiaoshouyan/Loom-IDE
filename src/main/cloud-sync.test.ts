@@ -51,7 +51,7 @@ describe('CloudSyncManager.loadTeamRules', () => {
     const rules = mgr.loadTeamRules(workspace);
     expect(rules.instructions).toBe('General rule.');
     expect(rules.fileRules).toHaveLength(3);
-    expect(rules.fileRules![0].pattern).toBe('src/**/*.ts');
+    expect(rules.fileRules![0]!.pattern).toBe('src/**/*.ts');
   });
 
   it('ignores malformed fileRules entries', () => {
@@ -68,7 +68,7 @@ describe('CloudSyncManager.loadTeamRules', () => {
     const mgr = new CloudSyncManager();
     const rules = mgr.loadTeamRules(workspace);
     expect(rules.fileRules).toHaveLength(1);
-    expect(rules.fileRules![0].pattern).toBe('src/**');
+    expect(rules.fileRules![0]!.pattern).toBe('src/**');
   });
 });
 

@@ -250,7 +250,7 @@ describe('CheckpointManager', () => {
     const loaded = mgr.load('test-ckpt-1');
     expect(loaded).not.toBeNull();
     expect(loaded?.id).toBe('test-ckpt-1');
-    expect(loaded?.messages[0].content).toBe('test');
+    expect(loaded?.messages[0]!.content).toBe('test');
     expect(loaded?.scratchpad.todo).toBe('fix bug');
   });
 
@@ -269,9 +269,9 @@ describe('CheckpointManager', () => {
 
     const list = mgr.list();
     expect(list.length).toBe(3);
-    expect(list[0].id).toBe('ckpt-2'); // newest first
-    expect(list[1].id).toBe('ckpt-3');
-    expect(list[2].id).toBe('ckpt-1');
+    expect(list[0]!.id).toBe('ckpt-2'); // newest first
+    expect(list[1]!.id).toBe('ckpt-3');
+    expect(list[2]!.id).toBe('ckpt-1');
   });
 
   it('loads the most recent checkpoint', () => {

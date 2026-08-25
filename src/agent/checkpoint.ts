@@ -78,7 +78,7 @@ export class CheckpointManager {
   loadLatest(): AgentCheckpoint | null {
     const entries = this.list();
     if (entries.length === 0) return null;
-    return entries[0];
+    return entries[0] ?? null;
   }
 
   /** List checkpoints sorted by creation time (newest first) */

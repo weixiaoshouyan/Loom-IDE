@@ -81,7 +81,7 @@ export function registerAIConfigHandlers() {
   ipcMain.handle('ai:detectEnvProviders', () => {
     const cfg = engine().getConfig();
     return cfg.providers
-      .filter((p: any) => ENV_PROVIDER_MAP[p.id] && !!process.env[ENV_PROVIDER_MAP[p.id]])
+      .filter((p: any) => { const v = ENV_PROVIDER_MAP[p.id]; return !!v && !!process.env[v]; })
       .map((p: any) => ({ providerId: p.id, name: p.name, envVar: ENV_PROVIDER_MAP[p.id], hasKey: !!p.apiKey }));
   });
 

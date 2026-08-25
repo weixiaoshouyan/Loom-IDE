@@ -455,7 +455,7 @@ export class AIEngine {
       if (idx === -1) {
         mergedProviders.push(dp);
       } else {
-        const mp = mergedProviders[idx];
+        const mp = mergedProviders[idx]!;
         dp.models.forEach(m => {
           if (!mp.models.includes(m)) {
             mp.models.push(m);

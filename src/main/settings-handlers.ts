@@ -46,10 +46,11 @@ export function registerSettingsHandlers() {
     const cfg = loadConfig();
     let target: any = cfg;
     for (let i = 0; i < keys.length - 1; i++) {
-      if (!target[keys[i]]) target[keys[i]] = {};
-      target = target[keys[i]];
+      const k = keys[i]!;
+      if (!target[k]) target[k] = {};
+      target = target[k];
     }
-    target[keys[keys.length - 1]] = value;
+    target[keys[keys.length - 1]!] = value;
     saveConfig(cfg);
     // Live-reload the command policy if the user just changed it.
     if (key === 'agent.allowedCommands' || key === 'agent.extraBlockedCommands' || key.startsWith('agent.commandPolicy')) {

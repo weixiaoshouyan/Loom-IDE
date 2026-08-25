@@ -427,7 +427,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
                       const newIdx = debugHistIdx + 1;
                       if (newIdx < debugCmdHistory.length) {
                         setDebugHistIdx(newIdx);
-                        setDebugInput(debugCmdHistory[debugCmdHistory.length - 1 - newIdx]);
+                        setDebugInput(debugCmdHistory[debugCmdHistory.length - 1 - newIdx]!);
                       }
                     }
                   }
@@ -436,7 +436,7 @@ function Panel({ visible, height, onClose, onResize, problems, outputLines, work
                     if (debugHistIdx > 0) {
                       const newIdx = debugHistIdx - 1;
                       setDebugHistIdx(newIdx);
-                      setDebugInput(debugCmdHistory[debugCmdHistory.length - 1 - newIdx]);
+                      setDebugInput(debugCmdHistory[debugCmdHistory.length - 1 - newIdx]!);
                     } else {
                       setDebugHistIdx(-1);
                       setDebugInput('');

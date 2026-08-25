@@ -161,7 +161,7 @@ function parseRuleFrontmatter(content: string, _fileName: string): { globs: stri
   const [, frontmatter, body] = frontmatterMatch;
   const globs: string[] = [];
 
-  for (const line of frontmatter.split('\n')) {
+  for (const line of frontmatter!.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.startsWith('globs:')) {
       const value = trimmed.slice(6).trim();
@@ -169,5 +169,5 @@ function parseRuleFrontmatter(content: string, _fileName: string): { globs: stri
     }
   }
 
-  return { globs, body: body.trim() };
+  return { globs, body: body!.trim() };
 }

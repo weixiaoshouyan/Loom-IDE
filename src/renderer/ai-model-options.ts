@@ -36,7 +36,7 @@ export function modelSelectionValue(mode: 'orca' | 'builtin' | undefined, provid
 export function parseModelSelection(value: string): { mode: 'orca' } | { mode: 'builtin'; providerId: string; model: string } {
   if (value === ORCA_MODEL_VALUE) return { mode: 'orca' };
   const [providerId, ...modelParts] = value.split('::');
-  return { mode: 'builtin', providerId, model: modelParts.join('::') };
+  return { mode: 'builtin', providerId: providerId!, model: modelParts.join('::') };
 }
 
 export function getConfiguredModelOptions(config: AIConfigOptionSource): ModelOption[] {

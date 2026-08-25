@@ -41,7 +41,7 @@ export function addPlannerPrompt(systemPrompt: string): string {
 
 export function parsePlan(content: string): AgentPlan | null {
   const match = content.match(/```json\s*([\s\S]*?)\s*```/);
-  const jsonText = match ? match[1] : content;
+  const jsonText = match ? match[1]! : content;
   try {
     const parsed = JSON.parse(jsonText);
     if (!Array.isArray(parsed.steps)) return null;

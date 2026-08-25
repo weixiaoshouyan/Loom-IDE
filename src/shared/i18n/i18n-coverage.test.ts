@@ -39,9 +39,9 @@ function usedTKeys(): string[] {
     const src = readFileSync(file, 'utf8');
     const tkRe = /\btk\(\s*'([a-zA-Z][\w.]*)'/g;
     let m: RegExpExecArray | null;
-    while ((m = tkRe.exec(src)) !== null) keys.push(`settings.${m[1]}`);
+    while ((m = tkRe.exec(src)) !== null) keys.push(`settings.${m[1]!}`);
     const tRe = /\bt\(\s*'([a-zA-Z][\w.]*)'/g;
-    while ((m = tRe.exec(src)) !== null) keys.push(m[1]);
+    while ((m = tRe.exec(src)) !== null) keys.push(m[1]!);
   }
   return keys;
 }

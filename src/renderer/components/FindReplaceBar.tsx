@@ -43,7 +43,7 @@ export default function FindReplaceBar({ editor, locale }: { editor: monaco.edit
       options: { inlineClassName: 'search-highlight-match', stickiness: 1 },
     }));
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
-    if (matches.length > 0) editor.revealRangeInCenter(matches[0].range);
+    if (matches.length > 0) editor.revealRangeInCenter(matches[0]!.range);
   }, [findText, matchCase, wholeWord, useRegex, editor]);
 
   // 重新计算匹配并根据当前光标/选区同步高亮与 “当前/总数” 计数
@@ -76,7 +76,7 @@ export default function FindReplaceBar({ editor, locale }: { editor: monaco.edit
     setMatchCount(matches.length);
     if (matches.length === 0) { setCurrentMatch(0); return; }
     const sel = editor.getSelection();
-    const pos = sel ? sel.getStartPosition() : (editor.getPosition() || matches[0].range.getStartPosition());
+    const pos = sel ? sel.getStartPosition() : (editor.getPosition() || matches[0]!.range.getStartPosition());
     const curIdx = matches.findIndex(m => m.range.getStartPosition().equals(pos));
     let nextIdx: number;
     if (dir === 1) {
@@ -86,11 +86,11 @@ export default function FindReplaceBar({ editor, locale }: { editor: monaco.edit
       if (curIdx >= 0) nextIdx = (curIdx - 1 + matches.length) % matches.length;
       else {
         let f = -1;
-        for (let k = matches.length - 1; k >= 0; k--) { if (matches[k].range.getStartPosition().isBefore(pos)) { f = k; break; } }
+        for (let k = matches.length - 1; k >= 0; k--) { if (matches[k]!.range.getStartPosition().isBefore(pos)) { f = k; break; } }
         nextIdx = f >= 0 ? f : matches.length - 1;
       }
     }
-    const target = matches[nextIdx];
+    const target = matches[nextIdx]!;
     editor.setSelection(target.range);
     editor.revealRangeInCenter(target.range);
     setCurrentMatch(nextIdx + 1);

@@ -65,8 +65,8 @@ describe('AIEngine agent tool compatibility', () => {
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    const retryBody = JSON.parse(fetchMock.mock.calls[1]![1].body);
     expect(firstBody.tools).toBeDefined();
     expect(retryBody.tools).toBeUndefined();
     expect(retryBody.tool_choice).toBeUndefined();
@@ -147,7 +147,7 @@ describe('AIEngine agent tool compatibility', () => {
     }
 
     expect(chunks.some(chunk => chunk.type === 'text' && chunk.content.includes('The project contains'))).toBe(true);
-    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1]![1].body);
     expect(JSON.stringify(secondBody.messages)).not.toContain('Using tool:');
   });
 

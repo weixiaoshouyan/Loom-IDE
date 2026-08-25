@@ -130,7 +130,7 @@ export function parseChord(chord: string): ParsedChord | null {
     else keyParts.push(p);
   }
   if (keyParts.length !== 1) return null;
-  return { ctrl, shift, alt, meta, key: keyParts[0].toLowerCase() };
+  return { ctrl, shift, alt, meta, key: keyParts[0]!.toLowerCase() };
 }
 
 /** 把 KeyboardEvent 归一化为可比较的 chord 字符串。 */
