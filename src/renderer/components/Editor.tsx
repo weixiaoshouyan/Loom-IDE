@@ -809,11 +809,12 @@ function Editor({ file, openFilePaths, onContentChange, workspacePath: wsPath }:
     monaco.editor.getModels().forEach(m => {
       if (m.uri.scheme === 'file' && !open.has(m.uri.fsPath)) {
         // 先释放 onDidChangeContent disposable，再 dispose 模型
-        const dispKey = Object.keys(modelDisposablesRef.current).find(k => normalizeModelPath(k) === m.uri.fsPath);
-        if (dispKey) {
-          modelDisposablesRef.current.get(dispKey)?.dispose();
-          modelDisposablesRef.current.delete(dispKey);
-        }
+        modelDisposablesRef.current.forEach((disp, key) => {
+          if (normalizeModelPath(key) === m.uri.fsPath) {
+            disp.dispose();
+            modelDisposablesRef.current.delete(key);
+          }
+        });
         m.dispose();
         Object.keys(viewStatesRef.current).forEach(key => {
           if (normalizeModelPath(key) === m.uri.fsPath) delete viewStatesRef.current[key];

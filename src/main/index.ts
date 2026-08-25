@@ -15,11 +15,10 @@ import { trace, clearTrace } from './startup-trace';
 clearTrace();
 trace('module-load-start');
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, screen, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, shell, screen, dialog, ipcMain, protocol } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import fs from 'fs';
-import http from 'http';
 import { AIEngine } from '../agent/ai-engine';
 import { PluginManager } from './plugin-manager';
 import { registerMarketplaceIPC } from './extension-marketplace';
@@ -74,10 +73,46 @@ const agentCommandQueue = new DevelopmentCommandQueue();
 (global as any).__loom_mainWindow = null;
 (global as any).__loom_commandQueue = agentCommandQueue;
 
-// ====== Static File Server ===================================================
-let staticServer: http.Server | null = null;
-let staticServerPort = 5174;
-const STATIC_PORT_PREFERRED = 5174;
+// ====== Renderer Loading (custom protocol) ===================================
+// Production loads the renderer via the privileged `loom-app://` scheme
+// instead of a localhost HTTP server: no port to collide on or drift, and no
+// other local process can reach the app's pages. The OS-level `loom://`
+// deep-link scheme is separate and unaffected.
+const PROD_APP_URL = 'loom-app://app/index.html';
+const DEV_APP_URL = 'http://localhost:5174';
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'loom-app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
+
+function registerProdProtocol() {
+  const ROOT = path.join(__dirname, '../renderer');
+  const MIME: Record<string, string> = {
+    '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+    '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+    '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.woff': 'font/woff',
+    '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+  };
+  protocol.handle('loom-app', async (request) => {
+    try {
+      const { pathname } = new URL(request.url);
+      const safePath = decodeURIComponent(pathname).replace(/^[/\\]+/, '');
+      let filePath = path.resolve(ROOT, safePath);
+      const rootPath = path.resolve(ROOT);
+      if (!filePath.startsWith(rootPath + path.sep) && filePath !== rootPath) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        filePath = path.join(ROOT, 'index.html');
+      }
+      const ext = path.extname(filePath);
+      const body = await fs.promises.readFile(filePath);
+      return new Response(body, { status: 200, headers: { 'Content-Type': MIME[ext] || 'application/octet-stream' } });
+    } catch {
+      return new Response('Internal Server Error', { status: 500 });
+    }
+  });
+}
 
 async function waitForUrl(url: string, timeoutMs = 20000): Promise<boolean> {
   const started = Date.now();
@@ -89,60 +124,6 @@ async function waitForUrl(url: string, timeoutMs = 20000): Promise<boolean> {
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   return false;
-}
-
-function startStaticServer(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let started = false;
-    const ROOT = path.join(__dirname, '../renderer');
-    const MIME: Record<string, string> = {
-      '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
-      '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
-      '.svg': 'image/svg+xml', '.ttf': 'font/ttf', '.woff': 'font/woff',
-      '.woff2': 'font/woff2', '.ico': 'image/x-icon',
-    };
-    staticServer = http.createServer((req, res) => {
-      try {
-        const rawUrl = req.url === '/' ? '/index.html' : (req.url || '/').split('?')[0];
-        const safePath = decodeURIComponent(rawUrl).replace(/^[/\\]+/, '');
-        let filePath = path.resolve(ROOT, safePath);
-        const rootPath = path.resolve(ROOT);
-        if (!filePath.startsWith(rootPath + path.sep) && filePath !== rootPath) {
-          res.writeHead(403);
-          res.end('Forbidden');
-          return;
-        }
-        if (!fs.existsSync(filePath)) filePath = path.join(ROOT, 'index.html');
-        const ext = path.extname(filePath);
-        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-        fs.createReadStream(filePath).pipe(res);
-      } catch (e) {
-        res.writeHead(500);
-        res.end('Internal Server Error');
-      }
-    });
-    staticServer.on('error', (e: any) => {
-      if (e.code === 'EADDRINUSE') {
-        if (started) return;
-        const nextPort = staticServerPort + 1;
-        console.warn(`Port ${staticServerPort} in use, trying ${nextPort}`);
-        staticServerPort = nextPort;
-        staticServer!.listen(nextPort, '127.0.0.1', () => {
-          started = true;
-          console.log(`[Loom Static Server] http://localhost:${staticServerPort}`);
-          resolve(staticServerPort);
-        });
-      } else {
-        reject(e);
-      }
-    });
-    staticServer.listen(STATIC_PORT_PREFERRED, '127.0.0.1', () => {
-      started = true;
-      staticServerPort = STATIC_PORT_PREFERRED;
-      console.log(`[Loom Static Server] http://localhost:${staticServerPort}`);
-      resolve(staticServerPort);
-    });
-  });
 }
 
 // ====== Window ===============================================================
@@ -204,13 +185,16 @@ function createWindow() {
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const appUrl = isDev ? 'http://localhost:5174' : `http://localhost:${staticServerPort}`;
-    if (!url.startsWith(appUrl)) event.preventDefault();
+    try {
+      const appOrigin = new URL(isDev ? DEV_APP_URL : PROD_APP_URL).origin;
+      if (new URL(url).origin === appOrigin) return;
+    } catch { /* malformed URL falls through to preventDefault */ }
+    event.preventDefault();
   });
 
   if (ws?.maximized) mainWindow.maximize();
 
-  const loadUrl = isDev ? 'http://localhost:5174' : `http://localhost:${staticServerPort}`;
+  const loadUrl = isDev ? DEV_APP_URL : PROD_APP_URL;
 
   // 渲染进程崩溃/无响应恢复（成熟 IDE 标配）：崩溃后自动重载页面，
   // 卡死时提示用户选择「等待」或「重新加载」。
@@ -241,19 +225,14 @@ function createWindow() {
   });
 
   mainWindow.loadURL(loadUrl).catch((err) => {
-    console.error('Failed to load URL, retrying with file fallback:', err);
+    console.error('Failed to load URL, retrying once:', err);
     // The window may be closed while loadURL is in flight. Accessing a
-    // destroyed window throws — and loadFile itself can throw SYNCHRONOUSLY
-    // (not just reject) when the window dies between the guard and the call,
-    // so the whole fallback is wrapped in try/catch.
+    // destroyed window throws — so the whole fallback is wrapped in try/catch.
     try {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      const fallbackPath = path.join(__dirname, '../renderer/index.html');
-      if (fs.existsSync(fallbackPath)) {
-        mainWindow.loadFile(fallbackPath).catch(() => {
-          console.error('File fallback also failed');
-        });
-      }
+      mainWindow.loadURL(loadUrl).catch(() => {
+        console.error('Retry load also failed');
+      });
     } catch (e) {
       console.error('Window destroyed during fallback load:', e);
     }
@@ -465,11 +444,11 @@ app.whenReady().then(async () => {
     // ---- Activate plugins ----
     pluginManager.activateAll();
 
-    // ---- Start static server (prod) or wait for Vite (dev) ----
+    // ---- Load renderer (prod: custom protocol; dev: wait for Vite) ----
     if (process.env.NODE_ENV === 'development') {
-      await waitForUrl('http://localhost:5174');
+      await waitForUrl(DEV_APP_URL);
     } else {
-      staticServerPort = await startStaticServer();
+      registerProdProtocol();
     }
 
     // ---- Create the window ----
@@ -525,7 +504,6 @@ app.whenReady().then(async () => {
   } catch (e) {
     console.error('App init failed:', e);
     if (!mainWindow) {
-      staticServerPort = 5174;
       createWindow();
       trace('after-createWindow-fallback');
     }
@@ -574,7 +552,6 @@ app.on('window-all-closed', () => {
   abortAllStreams();
   killAllRuns();
   stopHistoryCleanupTimer();
-  if (staticServer) { try { staticServer.close(); } catch {} }
   if (tray) { try { tray.destroy(); } catch {} }
   if (process.platform !== 'darwin') app.quit();
 });

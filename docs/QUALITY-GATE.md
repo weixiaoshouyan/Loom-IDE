@@ -14,7 +14,7 @@
 
 ### 2. ESLint 覆盖扩展 + `any` 渐进式门禁 (ratchet)
 - `eslint.config.mjs`：将 `src/renderer/**/*.{ts,tsx}` 纳入 lint 范围（用现有 `typescript-eslint` 类型感知规则：捕获 `any`、未用变量、不安全断言等）。
-- `no-explicit-any` 仓库级 = **`warn`**（当前约 650 处，提供可下降的指标，CI 保持绿色）。
+- `no-explicit-any` 仓库级 = **`warn`**（当前约 494 处，提供可下降的指标，CI 保持绿色）。
 - `eslint.config.staged.mjs` + `lint-staged`（package.json）：**pre-commit 仅对本次提交改动的文件强制 `any: error`**，从根源阻断新 `any` 流入。
 - React 专属规则（react-hooks / jsx-a11y）受限于沙盒无网络未安装，配置中已留注释说明联网后接入方式。
 
@@ -35,7 +35,7 @@
 |---|---|---|
 | `tsc --noEmit`（双配置） | ✅ 绿 | 0 错误（`config/tsconfig*.json`） |
 | ESLint | ✅ 绿 | `npm run lint` 可跑：0 errors（存量 `any` 警告见 `npm run lint:any-count`） |
-| `npm test` | ✅ 绿 | 27 文件 217 用例全过（含权限存储集成、破坏性操作审批、symlink 路径穿越用例） |
+| `npm test` | ✅ 绿 | 36 文件 284 用例全过（含权限存储集成、破坏性操作审批、symlink 路径穿越用例） |
 | `npm test -- --coverage` | ✅ 绿 | v8 实测 stmts 25.5 / branch 22 / funcs 25.9 / lines 27.3（阈值 22/18/22/24） |
 | e2e | ✅ 绿 | 冒烟 + 工作流（打开文件夹 → Monaco 编辑 → 保存落盘 → Git 面板 → diff 视图） |
 
@@ -61,7 +61,7 @@
 ## 四、Phase 2 分阶段拧紧（待办）
 
 - [ ] `noUncheckedIndexedAccess`：94 处，优先修安全关键路径（`command-policy` / `path-permissions`），其余随文件改动逐步消除；归零后写入 tsconfig。
-- [ ] `any` 清零：当前约 650 处（main 269 / renderer 265 / agent 114 / shared 2）。新代码已被 pre-commit 阻断；存量随模块改动清理。归零后将仓库级 `no-explicit-any` 翻 `error`，并退役 `eslint.config.staged.mjs`。
+- [ ] `any` 清零：当前约 494 处。新代码已被 pre-commit 阻断；存量随模块改动清理。归零后将仓库级 `no-explicit-any` 翻 `error`，并退役 `eslint.config.staged.mjs`。
 - [ ] React ESLint 插件：联网装 `@eslint-react/eslint-react` + `eslint-plugin-react-hooks` + `eslint-plugin-jsx-a11y`，按 `eslint.config.mjs` 顶部注释接入 hook / a11y 规则。
 - [ ] 渲染层覆盖率：换 `@vitest/coverage-istanbul`（或为组件测试补 jsdom 环境），把 `src/renderer/**/*.tsx` 重新纳入覆盖率，然后整体阈值 +10pp。
 
