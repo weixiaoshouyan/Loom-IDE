@@ -43,7 +43,7 @@ npm run dev
 # 质量检查（tsc 双配置 + ESLint）
 npm run lint
 
-# 单元测试（284 用例）
+# 单元测试（306 用例）
 npm test
 
 # 端到端测试（真实 Electron：工作流 / 打包版 / Agent 面板，10 用例）
@@ -61,7 +61,7 @@ npm run build
 | 编辑器 | Monaco Editor |
 | 终端 | xterm.js + node-pty |
 | AI | OpenAI 兼容 API + MCP + Tree-sitter 索引 |
-| 测试 | Vitest（284）· Playwright e2e（10）|
+| 测试 | Vitest（306，含 RTL 组件测试）· Playwright e2e（10）|
 
 ## 📂 目录结构
 

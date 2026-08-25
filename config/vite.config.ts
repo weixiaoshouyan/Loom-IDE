@@ -110,12 +110,12 @@ export default defineConfig({
         'src/shared/i18n/**',
       ],
       thresholds: {
-        // 2026-08-14 实测（含全部 TSX 组件）：15.36/11.79/13.76/16.71。
+        // 2026-08-25 实测：16.89/13.7/15.75/18.24（含新增组件测试与拆分模块）。
         // 阈值留安全余量防 CI 抖动；每里程碑随组件测试增加而上调。
-        statements: 14,
-        branches: 10,
-        functions: 12,
-        lines: 15,
+        statements: 16,
+        branches: 12,
+        functions: 14,
+        lines: 17,
       },
     },
   },

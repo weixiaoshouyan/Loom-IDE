@@ -10,7 +10,7 @@
 - 新增 `noImplicitOverride` + `noFallthroughCasesInSwitch`（近零噪声、高价值）。
 - 修复 `src/renderer/components/ErrorBoundary.tsx` 两处缺失 `override`（生命周期方法覆盖 `React.Component`），消除 TS4114。
 - 结果：**`tsc -p config/tsconfig.json --noEmit` 与 `tsc -p config/tsconfig.main.json --noEmit` 均 0 错误，全绿。**
-- `noUncheckedIndexedAccess` 经实测产生 94 处错误（索引返回 `T | undefined` 的下游传播），**留作 Phase 2 分阶段拧紧**，避免首日全红导致门禁被关。
+- `noUncheckedIndexedAccess` 已于 2026-08-25 全量修复约 150 处索引访问并**正式启用**于双 tsconfig。
 
 ### 2. ESLint 覆盖扩展 + `any` 渐进式门禁 (ratchet)
 - `eslint.config.mjs`：将 `src/renderer/**/*.{ts,tsx}` 纳入 lint 范围（用现有 `typescript-eslint` 类型感知规则：捕获 `any`、未用变量、不安全断言等）。
@@ -18,15 +18,16 @@
 - `eslint.config.staged.mjs` + `lint-staged`（package.json）：**pre-commit 仅对本次提交改动的文件强制 `any: error`**，从根源阻断新 `any` 流入。
 - React 专属规则（react-hooks / jsx-a11y）受限于沙盒无网络未安装，配置中已留注释说明联网后接入方式。
 
-### 3. Vitest 覆盖率阈值（2026-08-14 二次校准：istanbul + TSX 纳入）
+### 3. Vitest 覆盖率阈值（2026-08-25 三次校准：组件测试纳入，阈值上调）
 - **历史**：v8 provider 无法插桩 TSX（PARSE_ERROR），渲染层组件长期被排除在覆盖率外。
 - **现状**：切换 `@vitest/coverage-istanbul`（可插桩 TSX），并给 monaco-editor 加 resolve alias 解决 istanbul 解析冲突；**渲染层 TSX 组件已纳入覆盖率统计**。
 - **阈值**（2026-08-14 实测含全部 TSX）：statements 14 / branches 10 / functions 12 / lines 15（留安全余量防 CI 抖动）。当前实测 ~16/12.5/14/17；随组件测试增加，每里程碑上调。
-- **测试规模**：36 个测试文件 / 284 用例（含事件总线、keybindings、多语言索引、插件 worker 隔离、CLI 路径、DAP inspector、agent 纯函数等新增测试）。
+- **测试规模**：41 个测试文件 / 306 用例（新增 RTL 组件测试：Notification、ErrorBoundary、AgentTaskCenter、TabBar、AgentComparePanel、AgentHistoryPanel；i18n 键完整性守卫测试）。
 
 ### 4. CI + pre-commit 强制门禁
 - `.github/workflows/ci.yml`：单一流水线两个 job——`quality`（ubuntu：lint + 双 tsc + 覆盖率测试）与 `e2e-windows`（windows：构建 + Playwright e2e）。必须全绿才可合并。
 - `.husky/pre-commit`：提交时运行 `npx lint-staged`（阻断新 `any` 与真实 lint error）。
+- `scripts/any-ratchet.mjs`：CI 中强制仓库级显式 `any` 计数不高于基线（package.json `anyBaseline`），下降自动降基线。渲染层 localStorage 统一走 `src/renderer/storage.ts`。
 - i18n 键完整性：`src/shared/i18n/i18n-coverage.test.ts` 在单测中校验两份语言表键结构一致、渲染层所用 `t()`/`tk()` 键全部存在。
 
 ## 二、门禁当前真实状态（2026-08-10 实测）
@@ -35,7 +36,7 @@
 |---|---|---|
 | `tsc --noEmit`（双配置） | ✅ 绿 | 0 错误（`config/tsconfig*.json`） |
 | ESLint | ✅ 绿 | `npm run lint` 可跑：0 errors（存量 `any` 警告见 `npm run lint:any-count`） |
-| `npm test` | ✅ 绿 | 36 文件 284 用例全过（含权限存储集成、破坏性操作审批、symlink 路径穿越用例） |
+| `npm test` | ✅ 绿 | 41 文件 306 用例全过（含权限存储集成、破坏性操作审批、symlink 路径穿越、RTL 组件用例） |
 | `npm test -- --coverage` | ✅ 绿 | v8 实测 stmts 25.5 / branch 22 / funcs 25.9 / lines 27.3（阈值 22/18/22/24） |
 | e2e | ✅ 绿 | 冒烟 + 工作流（打开文件夹 → Monaco 编辑 → 保存落盘 → Git 面板 → diff 视图） |
 
@@ -60,7 +61,7 @@
 
 ## 四、Phase 2 分阶段拧紧（待办）
 
-- [ ] `noUncheckedIndexedAccess`：94 处，优先修安全关键路径（`command-policy` / `path-permissions`），其余随文件改动逐步消除；归零后写入 tsconfig。
+- [x] `noUncheckedIndexedAccess`：约 150 处全部修复，双 tsconfig 已启用（2026-08-25）。
 - [ ] `any` 清零：当前约 494 处。新代码已被 pre-commit 阻断；存量随模块改动清理。归零后将仓库级 `no-explicit-any` 翻 `error`，并退役 `eslint.config.staged.mjs`。
 - [ ] React ESLint 插件：联网装 `@eslint-react/eslint-react` + `eslint-plugin-react-hooks` + `eslint-plugin-jsx-a11y`，按 `eslint.config.mjs` 顶部注释接入 hook / a11y 规则。
 - [ ] 渲染层覆盖率：换 `@vitest/coverage-istanbul`（或为组件测试补 jsdom 环境），把 `src/renderer/**/*.tsx` 重新纳入覆盖率，然后整体阈值 +10pp。

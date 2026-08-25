@@ -316,7 +316,7 @@ export interface LoomMarketplace {
   uninstall: (id: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export interface LoomMcp {}
+export type LoomMcp = Record<string, never>;
 
 export interface LoomSettings {
   // The persisted app config is a main-layer shape (includes decrypted keys);
@@ -348,7 +348,7 @@ export interface LoomConversationSearchHit {
   matchScore: number;
 }
 
-export interface LoomConversations {}
+export type LoomConversations = Record<string, never>;
 
 export interface LoomTeamUser {
   id: string;
@@ -365,7 +365,7 @@ export interface LoomTeam {
   getUser: () => Promise<LoomTeamUser | null>;
 }
 
-export interface LoomTelemetry {}
+export type LoomTelemetry = Record<string, never>;
 
 export interface LoomDialog {
   openFile: () => Promise<{ path: string; content: string }[] | null>;

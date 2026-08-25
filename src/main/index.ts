@@ -69,6 +69,16 @@ const cloudSyncManager = new CloudSyncManager();
 const pathPermissions = new PathPermissionStore();
 const agentCommandQueue = new DevelopmentCommandQueue();
 
+// E2E runs must never touch (or inherit state from) the user's real profile:
+// point userData at a throwaway temp dir before anything reads config.
+// This also gives each launch its own single-instance lock, so tests don't
+// collide with a dev instance the developer has open.
+if (process.env.E2E === '1') {
+  const e2eUserData = path.join(require('os').tmpdir(), `loom-e2e-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(e2eUserData, { recursive: true });
+  app.setPath('userData', e2eUserData);
+}
+
 // Expose command queue globally for handler modules.
 (global as any).__loom_mainWindow = null;
 (global as any).__loom_commandQueue = agentCommandQueue;
@@ -477,12 +487,20 @@ app.whenReady().then(async () => {
         console.warn('[AutoUpdater] Error:', err);
         mainWindow?.webContents.send('update:error', String(err?.message || err));
       });
-      // The publish URL in package.json is a placeholder until a real update
-      // server exists — checking it every launch would always fail.
-      const updateUrl = (require('../package.json')?.build?.publish?.[0]?.url as string) || '';
-      const updateUrlIsPlaceholder = updateUrl.includes('updates.loom-ide.example') || updateUrl.includes('localhost');
+      // Update feed resolution order: LOOM_UPDATE_URL env override > package.json
+      // publish url. The packaged default stays a placeholder until a real
+      // update server exists — checking it every launch would always fail.
+      const pkgUpdateUrl = (require('../package.json')?.build?.publish?.[0]?.url as string) || '';
+      const envUpdateUrl = process.env.LOOM_UPDATE_URL?.trim() || '';
+      const updateUrlIsPlaceholder =
+        !envUpdateUrl &&
+        (pkgUpdateUrl.includes('updates.loom-ide.example') || pkgUpdateUrl.includes('localhost') || !pkgUpdateUrl);
+      if (envUpdateUrl) {
+        autoUpdater.setFeedURL({ provider: 'generic', url: envUpdateUrl });
+        console.log(`[AutoUpdater] using LOOM_UPDATE_URL feed: ${envUpdateUrl}`);
+      }
       if (updateUrlIsPlaceholder) {
-        console.warn('[AutoUpdater] publish url is a placeholder — skipping update check.');
+        console.warn('[AutoUpdater] no update feed configured (set LOOM_UPDATE_URL or build.publish.url) — skipping startup check.');
       } else {
         autoUpdater.checkForUpdates();
       }
