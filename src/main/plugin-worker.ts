@@ -52,6 +52,7 @@ const WORKER_SOURCE = `
 const { parentPort, workerData } = require('worker_threads');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
 let handlers = new Map();
 const api = {
@@ -83,9 +84,14 @@ function finish() {
 }
 
 try {
-  const mainPath = path.join(workerData.pluginRoot, workerData.mainRel);
-  if (fs.existsSync(mainPath)) {
-    const mod = require(mainPath);
+  const root = path.resolve(workerData.pluginRoot);
+  const mainPath = path.resolve(root, workerData.mainRel);
+  // 插件主文件必须位于插件根目录内，防止 mainRel 中 ../ 逃逸加载任意代码
+  if (!mainPath.startsWith(root + path.sep) || !fs.existsSync(mainPath)) {
+    finish();
+    return;
+  }
+  import(pathToFileURL(mainPath).href).then((mod) => {
     const activate = mod.activate || mod.default?.activate;
     if (typeof activate === 'function') {
       const result = activate(api);
@@ -97,9 +103,7 @@ try {
     } else {
       finish();
     }
-  } else {
-    finish();
-  }
+  }).catch((e) => parentPort.postMessage({ type: 'error', error: (e && e.message) || String(e) }));
 } catch (e) {
   parentPort.postMessage({ type: 'error', error: (e && e.message) || String(e) });
 }

@@ -30,6 +30,13 @@ export interface ResolvedRules {
   layers: RuleLayer[];
 }
 
+/** Resolve `rel` under `root`; return null when the result would escape `root`. */
+function resolveInside(root: string, rel: string): string | null {
+  const rootAbs = path.resolve(root);
+  const resolved = path.resolve(rootAbs, rel);
+  return resolved.startsWith(rootAbs + path.sep) ? resolved : null;
+}
+
 export class RulesEngine {
   private workspacePath: string;
   private customLayers: RuleLayer[] = [];
@@ -90,8 +97,8 @@ export class RulesEngine {
   }
 
   private loadProjectRules(): RuleLayer | null {
-    const rulesPath = path.join(this.workspacePath, '.loomrules');
-    if (!fs.existsSync(rulesPath)) return null;
+    const rulesPath = resolveInside(this.workspacePath, '.loomrules');
+    if (!rulesPath || !fs.existsSync(rulesPath)) return null;
     try {
       const content = fs.readFileSync(rulesPath, 'utf-8').trim();
       if (!content) return null;
@@ -108,8 +115,8 @@ export class RulesEngine {
   }
 
   private loadPatternRules(currentFile?: string): RuleLayer[] {
-    const rulesDir = path.join(this.workspacePath, '.loom', 'rules');
-    if (!fs.existsSync(rulesDir)) return [];
+    const rulesDir = resolveInside(this.workspacePath, path.join('.loom', 'rules'));
+    if (!rulesDir || !fs.existsSync(rulesDir)) return [];
 
     const layers: RuleLayer[] = [];
     try {

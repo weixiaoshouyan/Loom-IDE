@@ -221,7 +221,10 @@ async function executeSearchCode(args: any, context: ToolExecutionContext): Prom
     for (const entry of entries) {
       if (results.length >= maxResults) break;
       if (HIDDEN_DIRS.has(entry.name)) continue;
-      const fullPath = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      const name = sanitizeEntryName(entry.name);
+      const fullPath = name ? resolveInsideRoot(context.workspacePath, dir, name) : null;
+      if (!fullPath) continue;
       if (entry.isDirectory()) {
         await searchDir(fullPath, depth + 1);
       } else if (entry.isFile()) {
@@ -409,14 +412,33 @@ async function executeRunCommand(args: any, context: ToolExecutionContext): Prom
 
 const CHECKPOINT_IGNORE = new Set(['node_modules', '.git', 'dist', 'coverage', '.loom']);
 
-function listFilesForCheckpoint(dir: string, files: string[]) {
+/** readdir 条目名必须是无路径分隔符的普通文件名，杜绝 ../ 等逃逸形式。 */
+function sanitizeEntryName(name: string): string | null {
+  const base = path.basename(name);
+  if (base === '.' || base === '..' || base !== name) return null;
+  return base;
+}
+
+/** Resolve `name` under `dir`; return null when the result would escape `root`. */
+function resolveInsideRoot(root: string, dir: string, name: string): string | null {
+  const rootAbs = path.resolve(root) + path.sep;
+  const resolved = path.resolve(dir, name);
+  return resolved.startsWith(rootAbs) ? resolved : null;
+}
+
+function listFilesForCheckpoint(root: string, dir: string, files: string[], depth = 0) {
+  if (depth > 16) return;
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (CHECKPOINT_IGNORE.has(entry.name)) continue;
-      const fullPath = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      const name = sanitizeEntryName(entry.name);
+      if (!name) continue;
+      const fullPath = resolveInsideRoot(root, dir, name);
+      if (!fullPath) continue;
       if (entry.isDirectory()) {
-        listFilesForCheckpoint(fullPath, files);
+        listFilesForCheckpoint(root, fullPath, files, depth + 1);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.css', '.scss', '.html', '.py', '.rs', '.go', '.java'].includes(ext)) {
@@ -459,7 +481,7 @@ function executeCreateCheckpoint(args: any, context: ToolExecutionContext): stri
     const checkpointDir = path.join(context.workspacePath, '.loom', 'checkpoints', `checkpoint${label}-${timestamp}`);
     fs.mkdirSync(checkpointDir, { recursive: true });
     const files: string[] = [];
-    listFilesForCheckpoint(context.workspacePath, files);
+    listFilesForCheckpoint(context.workspacePath, context.workspacePath, files);
     for (const filePath of files) {
       const relative = path.relative(context.workspacePath, filePath);
       const dest = path.join(checkpointDir, relative);
@@ -504,11 +526,15 @@ function executeRestoreCheckpoint(args: any, context: ToolExecutionContext): str
     function restoreDir(srcDir: string, destRoot: string) {
       const items = fs.readdirSync(srcDir, { withFileTypes: true });
       for (const item of items) {
-        const src = path.join(srcDir, item.name);
+        // 跳过符号链接，恢复时绝不跟随链接写出工作区
+        if (item.isSymbolicLink()) continue;
+        const name = sanitizeEntryName(item.name);
+        if (!name) continue;
+        const src = path.join(srcDir, name);
         if (item.isDirectory()) {
-          restoreDir(src, path.join(destRoot, item.name));
+          restoreDir(src, path.join(destRoot, name));
         } else {
-          const dest = path.join(destRoot, item.name);
+          const dest = path.join(destRoot, name);
           fs.mkdirSync(path.dirname(dest), { recursive: true });
           fs.copyFileSync(src, dest);
         }

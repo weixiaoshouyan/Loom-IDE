@@ -20,6 +20,13 @@ import { RulesEngine } from '../agent/rules-engine';
 
 const TEAM_RULES_JSON = '.loom' + path.sep + 'rules';
 
+/** Resolve `rel` under `root`; return null when the result would escape `root`. */
+function resolveInside(root: string, rel: string): string | null {
+  const rootAbs = path.resolve(root);
+  const resolved = path.resolve(rootAbs, rel);
+  return resolved.startsWith(rootAbs + path.sep) ? resolved : null;
+}
+
 /** Resolve all workspace rules for the given workspace (stateless, per-call). */
 export function loadWorkspaceRulesPrompt(workspacePath: string): string {
   if (!workspacePath) return '';
@@ -35,8 +42,8 @@ export function loadWorkspaceRulesPrompt(workspacePath: string): string {
   // 2) Legacy team-rules JSON at `.loom/rules` — only when it is actually a
   //    file (the RulesEngine above treats `.loom/rules` as a directory).
   try {
-    const rulesPath = path.join(workspacePath, TEAM_RULES_JSON);
-    if (fs.existsSync(rulesPath) && fs.statSync(rulesPath).isFile()) {
+    const rulesPath = resolveInside(workspacePath, TEAM_RULES_JSON);
+    if (rulesPath && fs.existsSync(rulesPath) && fs.statSync(rulesPath).isFile()) {
       const raw = fs.readFileSync(rulesPath, 'utf-8');
       const parsed = JSON.parse(raw);
       const sections: string[] = [];
